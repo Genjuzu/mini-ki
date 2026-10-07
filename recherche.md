@@ -59,3 +59,23 @@ Pleias, https://github.com/Pleias/pi-cache-augmented-generation : die README bes
 ### Schluss
 
 Die Teile liegen getrennt vor: Einbettung, Vektorsuche, semantischer Cache, Dokumentensuche, Docker. Der Entwurf in `plan.md` setzt daraus eine andere Form: eine API auf dem eigenen Gerät, Schreiben nur nach der Bewertung gut, Buchstellen als Offline-Antwort, die nach der guten Bewertung in denselben Speicher wandern.
+
+## 2026-10-07 kiwix-serve
+
+Bibliothek: kiwix-serve, Teil von kiwix-tools. Context7 lieferte auf die Namen `kiwix-serve` und `libkiwix` keine passende Bibliothek. Beleg ist die gelesene Dokumentationsseite https://kiwix-tools.readthedocs.io/en/stable/kiwix-serve.html. Keine Fassung festgelegt. Kein eigener Lauf.
+
+Frage: Wie spricht ein Client eine KIWIX-Bibliothek an, um ZIM-Dateien zu finden, darin zu suchen und einen Artikel zu lesen?
+
+Belegter Ausschnitt: `kiwix-serve` liefert ZIM-Inhalt über HTTP und kann eine Bibliothek aus mehreren ZIM-Dateien führen. Der Aufruf `kiwix-serve --library` nimmt eine XML-Datei, mehrere Dateien getrennt durch Semikolon. Voreingestellter Port ist 80. `--address` wählt die Adresse, Voreinstellung sind alle vorhandenen Adressen.
+
+Öffentlich sind laut dieser Seite nur der OPDS-Katalog, `/raw` und `/search` einschließlich `/search/searchdescription.xml`. `/content` ist privat. `/catalog` ohne `v2` ist veraltet.
+
+`/catalog/v2/entries` liefert die ZIM-Dateien, seitenweise, Filter `lang`, `category`, `tag`, `notag`, `maxsize`, `q` und `name`. `maxsize` ist eine Größe in Byte. Ein Beispielwert für eine ganze Bibliothek steht dort nicht.
+
+`/search` macht eine Volltextsuche und kann HTML oder XML liefern. Parameter im gelesenen Text: `pattern`, `books.name`, `books.id`, `books.filter.{Kriterium}`, `pageLength` mit Voreinstellung 25 und Obergrenze 140, `start`, `format` mit den Werten html und xml. Mehrere ZIM-Dateien in einer Suche müssen dieselbe Sprache haben. Die Einleitung sagt, die Fernsuche gelte für ZIM-Dateien, die eine Volltextdatenbank enthalten.
+
+`/raw/ZIMNAME/content/PFAD` liefert den Eintrag. Die Seite sagt, `/raw` garantiere keine serverseitige Aufbereitung, im Unterschied zu `/content`.
+
+Nicht belegt: eine Context7-Fassung. Nicht belegt: dass jede ZIM-Datei eine Volltextsuche hat. Nicht belegt: der Umfang einer Wikipedia-Bibliothek. Nicht belegt: ein Vektorindex in kiwix-serve. Die Suche dieser Seite ist Volltext, keine Einbettung.
+
+Ein GitHub-Kommentar in https://github.com/kiwix/libkiwix/issues/480 nennt `http://library.kiwix.org/catalog/` als einen Katalog und sagt, jede `kiwix-serve` könne einen Katalog ausliefern, die Adresse müsse einstellbar sein. Dieser Kommentar ist keine Prüfung, ob die Adresse am 2026-10-07 antwortet. `[KIWIX-Adresse]` bleibt offen.

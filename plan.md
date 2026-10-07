@@ -76,3 +76,40 @@ Auf einem Gerät startet der Stapel. Ein fremdes Projekt schickt eine Anfrage an
 ## Nicht in diesem Entwurf
 
 Gewichtsanpassung. Eine zentrale gehostete API. Ein mitgeliefertes Buch. Eine gemessene Trefferquote. Ein lokales Sprachmodell als erste Offline-Antwort. Ein Eintrag in den Bausteinen von Watch.ai.
+
+## 2026-10-07 Weboberfläche und KIWIX
+
+Der Mensch will eine Weboberfläche, lokal oder über das Netz erreichbar, auf der ein Buch leicht zum Vektor wird. Später soll eine ganze KIWIX-Bibliothek Wissensquelle sein, über eine direkte Verbindung zu KIWIX. KIWIX bleibt die Bibliothek. Mini-KI beantwortet Fragen aus dieser Bibliothek und merkt sich die gute Antwort. Eine Änderung an der KIWIX-Software und ein eigenes Sprachmodell in KIWIX sind nicht dieser Entwurf.
+
+### Weboberfläche
+
+Die Oberfläche ist ein Client der HTTP-API, kein zweiter Dienst mit eigener Wahrheit. Sie liegt im selben Stapel. Voreingestellt hört sie nur auf dem Gerät. Erreichbar über das Netz wird sie erst, wenn der Mensch das öffnet. Vorher braucht es `[Zugang]`. Ein Schlüssel und ein Buch liegen nicht im Repository.
+
+Auf der Oberfläche legt der Mensch ein Buch ab und sieht, wann die Vektorisierung zu Ende ist. Danach stellt er eine Frage und bewertet gut oder schlecht. Dieselben vier API-Aufrufe bleiben die Einbindung für andere Projekte. Die Oberfläche ist der einfache Weg für den Menschen, nicht ein Ersatz der API.
+
+### KIWIX jetzt
+
+Die Verbindung geht an eine laufende `kiwix-serve`-Instanz. Ihre Adresse bleibt `[KIWIX-Adresse]`. Die Dokumentation von kiwix-serve, Stand der gelesenen Seite https://kiwix-tools.readthedocs.io/en/stable/kiwix-serve.html, nennt als öffentliche Endpunkte den OPDS-Katalog unter `/catalog/v2`, `/raw` und `/search`. `/content` ist dort privat und wird nicht verwendet.
+
+`kiwix-serve --library` liest eine XML-Bibliothek mit mehreren ZIM-Dateien. `/catalog/v2/entries` listet und filtert diese Dateien, unter anderem über `lang`, `category`, `tag`, `q`, `name` und `maxsize`. `/search` sucht im Volltext, mit `pattern`, `books.name` oder `books.id`, und `format=xml`. Die Seite nennt als Voreinstellung 25 Treffer und eine Obergrenze von 140 für `pageLength`. Eine Suche über mehrere ZIM-Dateien verlangt dieselbe Sprache. Durchsucht werden nur ZIM-Dateien, die eine Volltextsuche mitbringen. `/raw/ZIMNAME/content/PFAD` liefert den Eintrag ohne serverseitige Aufbereitung.
+
+Der Ablauf von oben bekommt eine weitere Herkunft `kiwix`, nach dem Speicher und nach den vektorisierten Büchern:
+
+1. Treffer im Speicher: gespeicherte Antwort.
+2. Treffer in einem vektorisierten Buch: die Stelle.
+3. Ist `[KIWIX-Adresse]` gesetzt, fragt Mini-KI `/search` und nimmt den Treffer als Antwort. Die Quellenangabe nennt die ZIM-Datei und den Pfad. Der Artikel selbst kommt bei Bedarf über `/raw`.
+4. Sonst die `[KI-API]`, oder `fehltreffer`.
+
+Bewertung gut schreibt Anfrage, Vektor und diese Antwort in denselben Speicher, mit der KIWIX-Quelle. Bewertung schlecht schreibt nichts. Die ZIM-Datei bleibt bei KIWIX.
+
+Eine ganze Bibliothek wird auf diesem Weg nicht vorab in Vektoren kopiert. Die Volltextsuche von KIWIX bleibt der Zugriff. Die Größe einer kompletten Bibliothek ist hier nicht gemessen.
+
+### KIWIX später
+
+Dieselbe Oberfläche soll später eine gewählte ZIM-Datei oder eine ganze Bibliothek so vektorisieren wie ein Buch. Das bleibt ein späterer Schritt. Der Katalogfilter `maxsize` ist belegt, ein konkreter Umfang nicht. Solange der Umfang offen ist, ist die direkte Suche der Weg, und die Vektorisierung der ganzen Bibliothek ist nicht der erste Bau.
+
+### Offen dazu
+
+- `[KIWIX-Adresse]`
+- `[Zugang]`, sobald die Oberfläche das Gerät verlässt
+- `[Port]` der Mini-KI. Der Port 80 ist die Voreinstellung von `kiwix-serve`, nicht die von Mini-KI.
