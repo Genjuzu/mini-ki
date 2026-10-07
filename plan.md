@@ -113,3 +113,25 @@ Dieselbe Oberfläche soll später eine gewählte ZIM-Datei oder eine ganze Bibli
 - `[KIWIX-Adresse]`
 - `[Zugang]`, sobald die Oberfläche das Gerät verlässt
 - `[Port]` der Mini-KI. Der Port 80 ist die Voreinstellung von `kiwix-serve`, nicht die von Mini-KI.
+
+## 2026-10-07 Neue Antwort, Android, Begleiter
+
+### Schlechte Bewertung
+
+Eine schlechte Bewertung schreibt weiter nichts in den Speicher. Dieselbe Frage bietet danach eine neue Antwort an.
+
+Bei einem Buch und bei KIWIX liegt die neue Antwort in der schon gereihten Liste. Die abgelehnte Stelle ist für diese Frage ausgelassen. Weiter und Zurück, auf der Weboberfläche die Pfeiltasten, gehen die übrigen Stellen der Reihe nach durch. Dieselbe Stelle kommt dabei nicht als Nächstes wieder. Eine versteckte Änderung einer Schwelle gibt es nicht. Die Auslassung ist die ganze Anpassung. Eine spätere, andere Frage darf dieselbe Stelle wieder finden, solange sie im Buch oder in der ZIM-Datei bleibt.
+
+Bei gesetzter `[KI-API]` holt die neue Antwort einen weiteren Versuch von dort. Kommt derselbe Text zurück, ist das die Antwort des Dienstes. Eine Temperatur oder ein anderer Abfrageparameter wird hier nicht erfunden.
+
+### Android, später
+
+Eine Handy-Anwendung für Android ist ein späterer Client derselben HTTP-API. Sie ist nicht der erste Bau. Das Telefon hat Netz. Solange das Netz da ist, füllt eine gute Bewertung den Speicher. Ohne Netz antwortet der Speicher, und was an Büchern oder einer KIWIX-Bibliothek auf dem Telefon liegt. Ein Framework, ein Laden und eine Fassung bleiben `[Android]`.
+
+### Begleiter der Uhr
+
+Für Watch.ai bleibt die Uhr der Agent. Die Einbettung liegt auf einem Begleiter in der Nähe. Der Mensch nennt dafür das Handy oder einen kleinen Rechner, als Beispiel einen Pi Zero 2W an einer Powerbank im Rucksack. Das Beispiel wählt `[Rechner]` nicht. Die Sprachaufnahme geht an diesen Begleiter. Dort läuft die Mini-KI. Eine bekannte gute Antwort kommt aus dem Speicher, ohne `[KI-API]`. Zurück an die Uhr geht kurzer Text.
+
+Die Strecke zwischen Uhr und Begleiter bleibt offen, wie in B7 zwischen BLE und WLAN. Dieser Abschnitt schreibt B7 nicht um und legt keinen Baustein an.
+
+Ob der ESP32-S3 der Uhr die Einbettung selbst rechnet, ist nicht belegt. ESP-SR erkennt Weckwort und feste Befehle, keine Satzvektoren. Die Beispiele von `esp-tflite-micro` 1.3.1 sind `hello_world`, `micro_speech` und `person_detection`, kein Satz-Einbettungsmodell. Eine TFLite-Fassung von `all-MiniLM-L6-v2` nennt Telefone, Raspberry Pi und eingebettete Systeme, nicht den ESP32, und wurde hier nicht ausgeführt. Ein anderes öffentliches Vorhaben lässt ein kleines Sprachmodell auf einem ESP32-S3 Text erzeugen. Das ist kein Speicher aus bewerteten Antworten. `[Einbettung auf der Uhr]` bleibt offen und ist nicht der erste Weg. Die Belege stehen in `recherche.md`.

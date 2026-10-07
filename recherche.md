@@ -79,3 +79,17 @@ Belegter Ausschnitt: `kiwix-serve` liefert ZIM-Inhalt über HTTP und kann eine B
 Nicht belegt: eine Context7-Fassung. Nicht belegt: dass jede ZIM-Datei eine Volltextsuche hat. Nicht belegt: der Umfang einer Wikipedia-Bibliothek. Nicht belegt: ein Vektorindex in kiwix-serve. Die Suche dieser Seite ist Volltext, keine Einbettung.
 
 Ein GitHub-Kommentar in https://github.com/kiwix/libkiwix/issues/480 nennt `http://library.kiwix.org/catalog/` als einen Katalog und sagt, jede `kiwix-serve` könne einen Katalog ausliefern, die Adresse müsse einstellbar sein. Dieser Kommentar ist keine Prüfung, ob die Adresse am 2026-10-07 antwortet. `[KIWIX-Adresse]` bleibt offen.
+
+## 2026-10-07 Einbettung auf einem ESP32
+
+Anlass: der Mensch fragt, ob die Uhr die Einbettung selbst rechnen kann oder ob das ein Begleiter tut. Kein Versuch auf einem ESP32.
+
+ESP-SR, schon belegt in der Watch.ai-Datei `steuerung/research/esp-sr.md`: Weckwort und feste Befehle, keine freie Transkription. Eine Satz-Einbettung steht in jenem Abruf nicht.
+
+`esp-tflite-micro` 1.3.1, Seite https://components.espressif.com/components/espressif/esp-tflite-micro/versions/1.3.1/readme?language=en : die README nennt die Beispiele `hello_world`, `micro_speech` und `person_detection` und den ESP32-S3 als Ziel. Ein Satz-Einbettungsmodell steht in dieser Beispielliste nicht. Die Laufzeittabelle derselben Seite gilt für Personenerkennung und wird nicht als Aussage über Einbettungen übernommen.
+
+https://huggingface.co/Nihal2000/all-MiniLM-L6-v2-quant.tflite : die Modellkarte beschreibt eine TFLite-Fassung von `all-MiniLM-L6-v2`, 384 Dimensionen, Padding auf 128, Nutzung über TensorFlow Lite in Python oder in einer mobilen Anwendung. Sie nennt Telefone, Raspberry Pi und eingebettete Systeme. Den ESP32 nennt sie nicht. Die Datei wurde hier nicht geladen und nicht ausgeführt.
+
+https://github.com/slvDev/esp32-ai : die README beschreibt ein Sprachmodell, das auf einem ESP32-S3 Text erzeugt. Zahlen dieser README werden nicht übernommen. Das Vorhaben ist kein Speicher aus einer Frage und einer bewerteten Antwort.
+
+Nicht belegt: dass ein ESP32-S3 `all-MiniLM-L6-v2` oder ein anderes Satz-Einbettungsmodell ausführt. `[Einbettung auf der Uhr]` bleibt offen. Der erste Weg ist der Begleiter.

@@ -6,6 +6,8 @@ Mini-KI ist ein Antwortspeicher für das eigene Gerät. Ein Projekt schickt eine
 
 Eine Weboberfläche im selben Stapel soll das Buch ablegen und die Vektorisierung zu Ende zeigen. Voreingestellt bleibt sie auf dem Gerät. Über das Netz ist sie erst mit `[Zugang]` erreichbar. KIWIX bleibt die Bibliothek. Mini-KI stellt die Frage davor. Eine ganze Bibliothek wird nicht vorab in Vektoren kopiert.
 
+Eine schlechte Bewertung bietet eine neue Antwort an. Bei Buch und KIWIX geht Weiter und Zurück die nächsten Stellen durch, ohne die abgelehnte Stelle zu wiederholen. Eine Android-Anwendung ist ein späterer Client. Die Uhr rechnet die Einbettung im ersten Weg nicht selbst. Das tut ein Begleiter in der Nähe.
+
 Geteilt wird das Vorhaben in diesem Repository. Jede Installation läuft auf dem Gerät des Menschen. Eine zentrale API, die wir betreiben, ist nicht Teil des Entwurfs.
 
 Die Installation soll später ein Docker-Compose-Stapel sein. Er ist noch nicht gebaut.
