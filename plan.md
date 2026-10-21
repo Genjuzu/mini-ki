@@ -135,3 +135,21 @@ Für Watch.ai bleibt die Uhr der Agent. Die Einbettung liegt auf einem Begleiter
 Die Strecke zwischen Uhr und Begleiter bleibt offen, wie in B7 zwischen BLE und WLAN. Dieser Abschnitt schreibt B7 nicht um und legt keinen Baustein an.
 
 Ob der ESP32-S3 der Uhr die Einbettung selbst rechnet, ist nicht belegt. ESP-SR erkennt Weckwort und feste Befehle, keine Satzvektoren. Die Beispiele von `esp-tflite-micro` 1.3.1 sind `hello_world`, `micro_speech` und `person_detection`, kein Satz-Einbettungsmodell. Eine TFLite-Fassung von `all-MiniLM-L6-v2` nennt Telefone, Raspberry Pi und eingebettete Systeme, nicht den ESP32, und wurde hier nicht ausgeführt. Ein anderes öffentliches Vorhaben lässt ein kleines Sprachmodell auf einem ESP32-S3 Text erzeugen. Das ist kein Speicher aus bewerteten Antworten. `[Einbettung auf der Uhr]` bleibt offen und ist nicht der erste Weg. Die Belege stehen in `recherche.md`.
+
+## 2026-10-21 Baustein aus dem Live-Avatar-Prototyp
+
+Der Antwortspeicher läuft schon im Live-Avatar-Prototyp (Repo `avatari-live`, `agent/cache.py`), mit gemessenem Modell und gemessenen Schwellen. Mini-KI baut nicht neu, sondern löst diese Logik heraus. Der Mensch will Mini-KI als Baustein, den er in jedes Projekt stecken kann.
+
+Pipeline: aus dem Prototyp herauslösen, hier als Baustein bauen, danach in AVA (Repo `avataribot`) einbauen, später den Live-Avatar mit AVA als Backend verbinden.
+
+Neu gegenüber dem Entwurf vom 2026-10-07:
+
+- Jede Antwort bekommt Daumen hoch oder Daumen runter. Daumen runter bietet eine neue Antwort an.
+- Ein Eintrag kann Anhänge tragen, zuerst Audio. Eine gecachte Antwort kostet dann auch keine neue Sprachsynthese.
+- Die Einbettung ist austauschbar: lokal ohne Schlüssel, oder über einen OpenAI-kompatiblen Endpunkt mit Schlüssel, zum Beispiel OpenRouter. Das einbindende Projekt braucht dafür eine Einstellung.
+- Ein Projekt, das selbst antwortet (AVA), legt die Antwort mit `POST /v1/eintraege` ab und nutzt Mini-KI nur zum Suchen.
+- Später werden auch Abläufe (Workflows) wiederverwendet, nicht nur Texte.
+
+`[Embedding-Modell]` hat damit einen gemessenen Kandidaten: `paraphrase-multilingual-MiniLM-L12-v2`, Deutsch, Apache-2.0. `[Schwelle]` hat einen gemessenen Kandidaten: 0,80, Gegenbeispiel 0,93. Beides gilt erst mit Freigabe.
+
+Aufbau: `docs/architektur.md`. Weichen: `entscheidungen/`.
