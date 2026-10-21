@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: 2026-10-21, Vorschlag. Freigabe durch den Menschen steht aus. Echte Weichen liegen unter `entscheidungen/` mit Status `offen`.
+Stand: 2026-10-21. Die vier Weichen unter `entscheidungen/` (Laufzeit, Einbettung, Daumen runter, Audio) sind entschieden von Wudu im Chat, 2026-10-21.
 
 ## Wozu
 
@@ -64,6 +64,7 @@ Ein Objekt pro Speicher. Sprache der Aufrufe wie im Blueprint des Prototyps.
 | `finden(frage)` | nur `gut`, Gegenbeispiele überspringen, erster Treffer ab `schwelle`. Rückgabe Kennung, Antwort, Ähnlichkeit, Anhänge |
 | `merken(frage, antwort, bewertung=None)` | neuer Eintrag, Vektor nur aus der Frage |
 | `bewerten(id, gut\|schlecht)` | setzt die Bewertung |
+| `ablehnen(id, frage, herkunft)` | Daumen runter nach Entscheidung: neue Antwort → `schlecht`; Cache-Treffer → nur für diese Anfrage gesperrt, Ablehnung protokolliert (#17) |
 | `umschreiben(id, antwort)` | neuer Text, Vektor bleibt. Anhänge zu diesem Text verfallen |
 | `neu(id, zusatz)` | Sprachmodell schreibt dieselbe Antwort neu, `finden` bleibt aus |
 | `trennen(frage, id)` | Gegenbeispiel: diese Frage trifft diesen Eintrag nicht mehr |
@@ -79,6 +80,7 @@ Schwellen sind Einstellungen mit den gemessenen Werten als Voreinstellung. Sie g
 Eine Schnittstelle: Modellname, Breite, Texte rein, Vektoren raus.
 
 - **Lokal**: das Modell aus dem Prototyp über fastembed (ONNX, CPU). Kein Schlüssel, kein Netz nach dem ersten Laden. Gewichte im Volume, nie im Repository oder Image.
+- Entschieden: **Voreinstellung API** (OpenRouter-Schlüssel, eingetragen in AVAs Einstellungen), **lokal per Umschalter**.
 - **API**: OpenAI-kompatibler Endpunkt `/embeddings`. OpenRouter bietet ihn unter `https://openrouter.ai/api/v1/embeddings` an. Adresse, Modell und Schlüssel sind Einstellungen. Der Schlüssel wird nie zurückgegeben und nie geloggt.
 - **Test**: feste Vektoren, damit Tests ohne Modell und ohne Netz laufen.
 
@@ -86,25 +88,25 @@ Vektoren zweier Modelle passen nicht zusammen. Der Speicher merkt sich Modell un
 
 ## Speicher
 
-Erste Fassung wie im Prototyp: eine SQLite-Datei pro Instanz, sqlite-vec in derselben Datei. Tabellen `eintrag` (Antwort, Bewertung, Art), `frage` + `frage_vec`, `gegen` + `gegen_vec`, `meta` (Modell, Breite, Schema-Fassung), `anhang`.
+Erste Fassung wie im Prototyp: eine SQLite-Datei pro Mandant (#15), sqlite-vec in derselben Datei. Tabellen `eintrag` (Antwort, Bewertung, Art), `frage` + `frage_vec`, `gegen` + `gegen_vec`, `meta` (Modell, Breite, Schema-Fassung), `anhang`.
 
 `art` ist zuerst `antwort`. Später kommt `ablauf` dazu, für wiederverwendbare Workflows. Ein Ablauf trägt seine Schritte als JSON in einem eigenen Feld. Das ist nicht die erste Fassung.
 
 ## Anhänge
 
-Ein Eintrag kann Anhänge haben. Ein Anhang hat eine Art (`audio`, später andere), einen Medientyp (zum Beispiel PCM 16-bit mono 24 kHz), eine Größe und einen Schlüssel zum Text, aus dem er entstand. Die Bytes liegen als Datei neben der SQLite-Datei, nicht in der Datenbank.
+Ein Eintrag kann Anhänge haben. Ein Anhang hat eine Art (`audio`, später andere), einen Medientyp (Audio: `audio/ogg; codecs=opus`), eine Größe und einen Schlüssel zum Text, aus dem er entstand. Die Bytes liegen als Datei neben der SQLite-Datei, nicht in der Datenbank.
 
-Regel: Ändert sich der Text, passt das Audio nicht mehr. `umschreiben` und `neu` entfernen die Anhänge. Ein Treffer liefert die Anhänge mit. Fehlt das Audio, entscheidet das Projekt, ob es die Stimme neu kauft. Mini-KI kauft keine Stimme.
+Regel: Ändert sich der Text, passt das Audio nicht mehr. `umschreiben` und `neu` entfernen die Anhänge. Ein Treffer liefert die Anhänge mit. Audio wird als Opus (Ogg) gespeichert, nicht als PCM: etwa 0,1 statt 2,9 MB pro Minute (#16). Der Live-Avatar spielt nur ab. Fehlt das Audio, entscheidet das Projekt, ob es die Stimme neu kauft. Mini-KI kauft keine Stimme.
 
 ## HTTP-API
 
-Dünn über dem Kern. Voreingestellt nur auf dem Gerät erreichbar. Über das Netz erst mit `[Zugang]`.
+Dünn über dem Kern. Voreingestellt nur auf dem Gerät erreichbar. Jeder Aufruf trägt einen Kunden-Schlüssel (`Authorization: Bearer …`), daraus folgt der Mandant (#15). Ohne Mandanten-Konfiguration gilt der Mandant `standard`.
 
 | Aufruf | Kern |
 | --- | --- |
 | `POST /v1/anfragen` `{text, verlauf?, nur_suchen?}` | `finden`. Ohne Treffer und mit `[KI-API]`: Antwort holen, unbewertet merken. Herkunft `speicher`, `ki` oder `fehltreffer` |
 | `POST /v1/eintraege` `{frage, antwort, bewertung?}` | `merken`, wenn das Projekt die Antwort selbst erzeugt hat |
-| `POST /v1/anfragen/{id}/bewertung` `{bewertung}` | `bewerten` |
+| `POST /v1/anfragen/{id}/bewertung` `{bewertung, frage?}` | Daumen hoch: `bewerten(gut)`. Daumen runter: `ablehnen` je nach Herkunft, danach ist „neu generieren“ frei |
 | `POST /v1/anfragen/{id}/neu` `{zusatz?}` | `neu` |
 | `PUT /v1/anfragen/{id}/text` `{text}` | `umschreiben` |
 | `POST /v1/anfragen/{id}/trennen` `{frage}` | `trennen` |
@@ -119,11 +121,40 @@ Die vier Aufrufe aus `plan.md` bleiben. `POST /v1/buecher` und KIWIX bleiben im 
 
 Der Kern ist Python. Der Prototyp ist Python, fastembed und sqlite-vec sind dort erprobt, die Messwerte gelten für genau diesen Weg. Ein Neuschreiben in einer zweiten Sprache wäre am Anfang doppelte Arbeit ohne Messung.
 
-AVA ist TypeScript. AVA spricht mit Mini-KI über die HTTP-API, als Dienst im Compose-Stapel neben AVA. Ein kleiner TypeScript-Client kommt als Beispiel in dieses Repository. Python-Projekte wie der Live-Avatar dürfen den Kern direkt importieren. Begründung und Alternative: `entscheidungen/laufzeit.md`.
+AVA ist TypeScript. AVA spricht mit Mini-KI über die HTTP-API. Kein Nachbau des Kerns in TypeScript (entschieden, `entscheidungen/laufzeit.md`). Ein kleiner TypeScript-Client kommt als Beispiel in dieses Repository. Python-Projekte wie der Live-Avatar dürfen den Kern direkt importieren.
+
+## Mandanten und Skalierung
+
+Entschieden von Wudu im Chat, 2026-10-21. Umsetzung: #15.
+
+- **Ein Dienst pro Server.** Ein gemeinsamer Mini-KI-Dienst bedient alle Kunden auf diesem Server. Das Embedding-Modell liegt nur einmal im RAM.
+- **Daten strikt pro Kunde.** Jeder Kunde ist ein Mandant mit eigenem Ordner:
+
+```text
+/data/
+  modell-cache/              geteilt, nur Gewichte (lokale Einbettung)
+  mandanten/
+    <mandant-id>/
+      mini-ki.sqlite         Cache, Vektoren, Bewertungen, Ablehnungen
+      anhaenge/              Audio (Opus) zu den gecachten Antworten
+      einstellungen.json     Einbettung API/lokal, Schlüssel (nur hier)
+```
+
+- **Kunden-Schlüssel.** Der Dienst leitet den Mandanten aus dem Schlüssel ab, nie aus einer frei mitgeschickten ID. Schlüssel nur als Hash gespeichert. Ein AVA-Container bekommt genau einen Schlüssel und sieht nur seine eigenen Daten.
+- **Ein Kern-Objekt pro Mandant**, beim ersten Zugriff angelegt. Die Einbettung wird geteilt.
+- **Mehr Kunden heißt weitere Server.** Ein Mandant liegt immer auf genau einem Server. Kein gemeinsamer Speicher über Server.
+- **Anfang:** Solange nur Wudu AVA nutzt, läuft Mini-KI als zweiter Container neben AVA im selben Compose-Stapel, mit dem Mandanten `standard`.
+
+```text
+Server
+  ava-kunde-1 ──┐
+  ava-kunde-2 ──┼── HTTP + Kunden-Schlüssel ──> mini-ki (ein Dienst, Modell 1x im RAM)
+  ava-kunde-n ──┘                                  └─ /data/mandanten/<id>/…
+```
 
 ## Docker Compose
 
-Ein Dienst `mini-ki`, ein Volume `/data` für SQLite, Anhänge und Modell-Cache. Einstellungen über `.env` (nicht im Repository, nur `.env.example`). Port `[Port]`, voreingestellt nur `127.0.0.1`.
+Ein Dienst `mini-ki`, ein Volume `/data` mit Modell-Cache und den Mandanten-Ordnern (siehe oben). Einstellungen über `.env` (nicht im Repository, nur `.env.example`). Port `[Port]`, voreingestellt nur `127.0.0.1`.
 
 ## Einbau-Beispiele
 
@@ -133,4 +164,4 @@ Ein Dienst `mini-ki`, ein Volume `/data` für SQLite, Anhänge und Modell-Cache.
 
 ## Nicht in dieser Stufe
 
-Bücher, KIWIX, Android, Uhr, Gewichtsanpassung, eine zentrale gehostete API.
+Bücher, KIWIX, Android, Uhr, Gewichtsanpassung, eine öffentliche zentrale API für fremde Projekte. (Der gemeinsame Dienst pro Server für AVA-Kunden oben ist davon getrennt.)
