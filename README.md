@@ -12,6 +12,6 @@ Geteilt wird das Vorhaben in diesem Repository. Jede Installation läuft auf dem
 
 Die Installation soll später ein Docker-Compose-Stapel sein. Er ist noch nicht gebaut.
 
-Ausarbeitung: `plan.md`. Belege: `recherche.md`.
+Ausarbeitung: `plan.md`. Aufbau: `docs/architektur.md`. Weichen: `entscheidungen/`. Belege: `recherche.md`.
 
 Lizenz: `[Lizenz]`.
