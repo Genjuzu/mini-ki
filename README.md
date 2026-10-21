@@ -12,6 +12,24 @@ Geteilt wird das Vorhaben in diesem Repository. Jede Installation läuft auf dem
 
 Die Installation soll später ein Docker-Compose-Stapel sein. Er ist noch nicht gebaut.
 
+## Kern (Python)
+
+Der Kern ist das Paket `mini-ki`. Ein Objekt hält eine SQLite-Datei. Die Einbettung kommt beim Erzeugen mit: sie nennt Modell und Breite und macht aus Texten Vektoren. Die Schwellen stehen auf den gemessenen Werten: Treffer 0,80, Gegenbeispiel 0,93, gleiche Antwort 0,65.
+
+```python
+from mini_ki import MiniKI
+
+kern = MiniKI("daten/mini-ki.sqlite", einbettung)
+kennung = kern.merken(
+    "Wie erreiche ich Avatari?",
+    "Die Kontaktdaten stehen auf der Webseite von Avatari.",
+)
+kern.bewerten(kennung, "gut")
+treffer = kern.finden("Wie erreiche ich Avatari?")
+```
+
+`finden` liefert die Kennung, die Antwort und die Ähnlichkeit. Nur eine mit `gut` bewertete Antwort kommt zurück.
+
 Ausarbeitung: `plan.md`. Aufbau: `docs/architektur.md`. Weichen: `entscheidungen/`. Belege: `recherche.md`.
 
 Lizenz: `[Lizenz]`.
