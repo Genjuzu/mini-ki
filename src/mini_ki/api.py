@@ -1,23 +1,30 @@
 """Dünne HTTP-API v1 über einem Kern.
 
-Voreingestellt hört der Dienst nur auf 127.0.0.1. Ein optionaler Zugang
-steht im Kopf `Authorization: Bearer`. Ohne gesetzten Zugang ist kein
-Schlüssel nötig. Mandant ist `standard`, bis die Trennung aus #15 da ist.
+Voreingestellt hört der Dienst nur auf 127.0.0.1. Ohne Mandanten-Konfiguration
+ist der Mandant `standard`; ein optionaler Zugang steht im Kopf
+`Authorization: Bearer`. Mit Mandanten kommt die ID nur aus diesem
+Kunden-Schlüssel: fehlt er oder stimmt er nicht, ist die Antwort 401,
+ein gesperrter Mandant antwortet 403. Der Schlüssel steht weder im Log
+noch in der Antwort.
 
 Daumen runter folgt `entscheidungen/daumen-runter.md`. Ist `ablehnen` am
 Kern vorhanden (#17), wird es gerufen. Sonst wird eine neue Antwort als
 `schlecht` gespeichert, ein Speicher-Treffer nur für diese Anfrage gesperrt.
 
-`GET` und `PUT /v1/einstellungen` lesen und schreiben die Einbettung.
-Der Schlüssel wird nur gespeichert und nie zurückgegeben.
+`GET` und `PUT /v1/einstellungen` lesen und schreiben die Einbettung
+des aufgerufenen Mandanten. Der Schlüssel wird nur gespeichert und nie
+zurückgegeben.
 """
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import hmac
 import json
+import logging
 import re
+import sys
 import threading
 import traceback
 from collections.abc import Callable, Mapping
@@ -26,11 +33,14 @@ from typing import NoReturn
 from urllib.parse import unquote
 
 from .einstellungen import Einstellungen, EinstellungenFehler, aus_kern
+from .mandanten import MandantGesperrt, MandantUnbekannt
 from .sperre import gesperrt
 from .sprachmodell import Sprachmodell
 from .sprachmodell import SprachmodellFehler
 from .sprachmodell import neu as antwort_neu
 from .sprachmodell import verweis_umschreiben
+
+_log = logging.getLogger(__name__)
 
 _MAX_JSON = 1_000_000
 _MAX_ANHANG = 32 * 1024 * 1024
@@ -81,6 +91,55 @@ def _gleich(links: str, rechts: str) -> bool:
     )
 
 
+def _bearer_lesen(koepfe: Mapping[str, str] | None) -> str | None:
+    if not koepfe:
+        return None
+    roh = ""
+    for name, wert in koepfe.items():
+        if name.lower() == "authorization" and isinstance(wert, str):
+            roh = wert
+            break
+    treffer = _BEARER.fullmatch(roh.strip())
+    if treffer is None:
+        return None
+    return treffer.group(1)
+
+
+def _nadel(geheim: str | None) -> bytes | None:
+    if not geheim or len(geheim) < 16:
+        return None
+    try:
+        return geheim.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+
+
+def _ohne(text: str, geheim: str | None) -> str:
+    nadel = _nadel(geheim)
+    if nadel is None:
+        return text
+    return text.replace(nadel.decode("utf-8"), "[redigiert]")
+
+
+def _reinigen(
+    antwort: tuple[int, dict[str, str], bytes],
+    geheim: str | None,
+) -> tuple[int, dict[str, str], bytes]:
+    """Nimmt den Kunden-Schlüssel aus Kopf und Inhalt, falls er dort steht."""
+    status, koepfe, inhalt = antwort
+    nadel = _nadel(geheim)
+    if nadel is None:
+        return antwort
+    text = nadel.decode("utf-8")
+    neu = {name: wert.replace(text, "[redigiert]") for name, wert in koepfe.items()}
+    if nadel in inhalt:
+        inhalt = inhalt.replace(nadel, b"[redigiert]")
+        for name in list(neu):
+            if name.lower() == "content-length":
+                neu[name] = str(len(inhalt))
+    return status, neu, inhalt
+
+
 def _segment(roh: str, muster: re.Pattern[str]) -> str | None:
     text = unquote(roh)
     if muster.fullmatch(text):
@@ -95,13 +154,26 @@ def _satz(wert: object) -> str | None:
     return wert.strip()
 
 
+class _Kontext:
+    def __init__(
+        self,
+        mandant_id: str,
+        kern: object,
+        einstellungen: Einstellungen | None,
+    ) -> None:
+        self.mandant_id = mandant_id
+        self.kern = kern
+        self.einstellungen = einstellungen
+
+
 class Api:
     """HTTP-Schicht. Der Kern, das Sprachmodell und die KI kommen von außen."""
 
     def __init__(
         self,
-        kern: object,
+        kern: object | None = None,
         *,
+        mandanten: object | None = None,
         token: str | None = None,
         sprachmodell: Sprachmodell | None = None,
         ki: Ki | None = None,
@@ -112,17 +184,42 @@ class Api:
             raise TypeError("Das Sprachmodell muss aufrufbar sein.")
         if ki is not None and not callable(ki):
             raise TypeError("Die KI muss aufrufbar sein.")
-        self._kern = kern
+        if mandanten is None and kern is None:
+            raise TypeError("Der Kern fehlt.")
+        if mandanten is not None and kern is not None:
+            raise TypeError("Der Kern und die Mandanten schließen sich aus.")
+        if mandanten is not None and not all(
+            callable(getattr(mandanten, name, None))
+            for name in ("konfiguriert", "zuordnen", "kern", "einstellungen")
+        ):
+            raise TypeError("Die Mandanten müssen eine Registry sein.")
+        self._kern_fest = kern
+        self._mandanten = mandanten
         self._token = _zugang(token)
         self._sprachmodell = sprachmodell
         self._ki = ki
         self._einstellungen = einstellungen
         self._einbettung_fabrik = einbettung_fabrik
         self._lock = threading.Lock()
-        self._herkunft: dict[str, str] = {}
-        self._fragen: dict[str, str] = {}
+        self._herkunft: dict[tuple[str, str], str] = {}
+        self._fragen: dict[tuple[str, str], str] = {}
+        self._anfrage: contextvars.ContextVar[_Kontext | None] = contextvars.ContextVar(
+            "mini_ki_anfrage",
+            default=None,
+        )
+
+    @property
+    def _kern(self) -> object:
+        kontext = self._anfrage.get()
+        if kontext is not None:
+            return kontext.kern
+        if self._kern_fest is None:
+            raise RuntimeError("Der Kern fehlt.")
+        return self._kern_fest
 
     def __repr__(self) -> str:
+        if self._mandanten is not None and self._mandanten.konfiguriert():
+            return "Api(mandanten=True)"
         return f"Api(mandant='standard', zugang={self._token is not None})"
 
     def bearbeiten(
@@ -133,36 +230,89 @@ class Api:
         koepfe: Mapping[str, str] | None = None,
     ) -> tuple[int, dict[str, str], bytes]:
         """Eine Anfrage. Liefert Status, Kopfreihen und Inhalt."""
+        geheim = None
         try:
             if not isinstance(koerper, (bytes, bytearray)):
                 return _json(400, {"fehler": "Der Inhalt ist ungültig."})
             roh = bytes(koerper)
-            if not self._zugang_ok(koepfe or {}):
-                return _json(
-                    401,
-                    {"fehler": "Der Zugang fehlt."},
-                    {"WWW-Authenticate": 'Bearer realm="mini-ki"'},
-                )
-            weg = _pfad(pfad)
-            if weg is None:
-                return _json(400, {"fehler": "Der Pfad ist ungültig."})
-            return self._route(methode.upper(), weg, roh)
+            kopf = koepfe or {}
+            geheim = _bearer_lesen(kopf)
+            try:
+                kontext = self._kontext(kopf)
+            except _Abbruch as abbruch:
+                return _reinigen(abbruch.antwort, geheim)
+            marke = self._anfrage.set(kontext)
+            try:
+                weg = _pfad(pfad)
+                if weg is None:
+                    return _reinigen(_json(400, {"fehler": "Der Pfad ist ungültig."}), geheim)
+                self._protokoll(weg, geheim)
+                return _reinigen(self._route(methode.upper(), weg, roh), geheim)
+            except _Abbruch as abbruch:
+                return _reinigen(abbruch.antwort, geheim)
+            finally:
+                self._anfrage.reset(marke)
         except _Abbruch as abbruch:
-            return abbruch.antwort
+            return _reinigen(abbruch.antwort, geheim)
         except Exception:
-            traceback.print_exc()
-            return _json(500, {"fehler": "Interner Fehler."})
+            sys.stderr.write(_ohne(traceback.format_exc(), geheim))
+            return _reinigen(_json(500, {"fehler": "Interner Fehler."}), geheim)
+
+    def _kontext(self, koepfe: Mapping[str, str]) -> _Kontext:
+        if self._mandanten is not None and self._mandanten.konfiguriert():
+            return self._kontext_mandant(koepfe)
+        if not self._zugang_ok(koepfe):
+            self._abbruch_401()
+        if self._mandanten is not None:
+            return _Kontext(
+                "standard",
+                self._mandanten.kern("standard"),
+                self._mandanten.einstellungen("standard"),
+            )
+        if self._kern_fest is None:
+            raise RuntimeError("Der Kern fehlt.")
+        return _Kontext("standard", self._kern_fest, None)
+
+    def _kontext_mandant(self, koepfe: Mapping[str, str]) -> _Kontext:
+        schluessel = _bearer_lesen(koepfe)
+        if not schluessel:
+            _log.warning("Zugang abgelehnt")
+            self._abbruch_401()
+        try:
+            mandant_id = self._mandanten.zuordnen(schluessel)
+            kern = self._mandanten.kern(mandant_id)
+            einstellungen = self._mandanten.einstellungen(mandant_id)
+        except MandantGesperrt:
+            _log.warning("Mandant gesperrt")
+            self._fehler(403, "Der Mandant ist gesperrt.")
+        except MandantUnbekannt:
+            _log.warning("Zugang abgelehnt")
+            self._abbruch_401()
+        return _Kontext(mandant_id, kern, einstellungen)
+
+    def _abbruch_401(self) -> NoReturn:
+        self._fehler(
+            401,
+            "Der Zugang fehlt.",
+            **{"WWW-Authenticate": 'Bearer realm="mini-ki"'},
+        )
+
+    def _protokoll(self, weg: str, geheim: str | None) -> None:
+        if self._mandanten is None or not self._mandanten.konfiguriert():
+            return
+        kontext = self._anfrage.get()
+        mandant_id = kontext.mandant_id if kontext is not None else "standard"
+        _log.info("%s", _ohne(f"Anfrage {weg} Mandant {mandant_id}", geheim))
+
+    def _paar(self, eintrag_id: str) -> tuple[str, str]:
+        kontext = self._anfrage.get()
+        mandant_id = kontext.mandant_id if kontext is not None else "standard"
+        return mandant_id, eintrag_id
 
     def _zugang_ok(self, koepfe: Mapping[str, str]) -> bool:
         if self._token is None:
             return True
-        roh = ""
-        for name, wert in koepfe.items():
-            if name.lower() == "authorization" and isinstance(wert, str):
-                roh = wert
-                break
-        treffer = _BEARER.fullmatch(roh.strip())
-        gegeben = treffer.group(1) if treffer else ""
+        gegeben = _bearer_lesen(koepfe) or ""
         return _gleich(gegeben, self._token)
 
     def _route(
@@ -404,9 +554,10 @@ class Api:
     def _loeschen(self, eintrag_id: str) -> tuple[int, dict[str, str], bytes]:
         if not self._kern.vergessen(eintrag_id):
             self._fehler(404, "Nicht gefunden.")
+        paar = self._paar(eintrag_id)
         with self._lock:
-            self._herkunft.pop(eintrag_id, None)
-            self._fragen.pop(eintrag_id, None)
+            self._herkunft.pop(paar, None)
+            self._fragen.pop(paar, None)
         return 204, {"Content-Length": "0"}, b""
 
     def _anhang_setzen(
@@ -435,6 +586,9 @@ class Api:
         return 200, _kopfzeilen(daten, typ), daten
 
     def _konfiguration(self) -> Einstellungen:
+        kontext = self._anfrage.get()
+        if kontext is not None and kontext.einstellungen is not None:
+            return kontext.einstellungen
         if self._einstellungen is None:
             self._einstellungen = aus_kern(self._kern, self._einbettung_fabrik)
         return self._einstellungen
@@ -492,10 +646,11 @@ class Api:
         return int(zahl)
 
     def _merke(self, eintrag_id: str, herkunft: str, frage: str) -> None:
+        paar = self._paar(eintrag_id)
         with self._lock:
-            self._herkunft[eintrag_id] = herkunft
+            self._herkunft[paar] = herkunft
             if frage:
-                self._fragen[eintrag_id] = frage
+                self._fragen[paar] = frage
 
     def _herkunft_fuer(self, eintrag_id: str, eintrag: dict, angegeben: object) -> str:
         if angegeben is not None:
@@ -504,7 +659,7 @@ class Api:
                 self._fehler(400, "Die Herkunft ist unbekannt.")
             return text
         with self._lock:
-            gemerkt = self._herkunft.get(eintrag_id)
+            gemerkt = self._herkunft.get(self._paar(eintrag_id))
         if gemerkt in _HERKUNFT:
             return gemerkt
         if eintrag.get("bewertung") == "gut":
@@ -519,7 +674,7 @@ class Api:
             if text:
                 return text
         with self._lock:
-            gemerkt = self._fragen.get(eintrag_id)
+            gemerkt = self._fragen.get(self._paar(eintrag_id))
         if gemerkt:
             return gemerkt
         return eintrag.get("frage") or ""

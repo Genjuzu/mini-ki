@@ -100,7 +100,7 @@ Regel: Ändert sich der Text, passt das Audio nicht mehr. `umschreiben` und `neu
 
 ## HTTP-API
 
-Dünn über dem Kern. Voreingestellt nur auf dem Gerät erreichbar. Jeder Aufruf trägt einen Kunden-Schlüssel (`Authorization: Bearer …`), daraus folgt der Mandant (#15). Ohne Mandanten-Konfiguration gilt der Mandant `standard`.
+Dünn über dem Kern. Voreingestellt nur auf dem Gerät erreichbar. Jeder Aufruf trägt einen Kunden-Schlüssel (`Authorization: Bearer …`), daraus folgt der Mandant. Ohne Schlüssel oder mit einem falschen Schlüssel antwortet der Dienst 401, bei einem gesperrten Mandanten 403. Eine Mandanten-ID aus dem Pfad oder dem Body gilt nicht. Ohne Mandanten-Konfiguration gilt der Mandant `standard`.
 
 | Aufruf | Kern |
 | --- | --- |
@@ -133,6 +133,7 @@ Entschieden von Wudu im Chat, 2026-10-21. Umsetzung: #15.
 ```text
 /data/
   modell-cache/              geteilt, nur Gewichte (lokale Einbettung)
+  mandanten-zugang.json      Salt, HMAC-SHA-256 und Sperre, nie der Schlüssel
   mandanten/
     <mandant-id>/
       mini-ki.sqlite         Cache, Vektoren, Bewertungen, Ablehnungen
@@ -140,10 +141,11 @@ Entschieden von Wudu im Chat, 2026-10-21. Umsetzung: #15.
       einstellungen.json     Einbettung API/lokal, Schlüssel (nur hier)
 ```
 
-- **Kunden-Schlüssel.** Der Dienst leitet den Mandanten aus dem Schlüssel ab, nie aus einer frei mitgeschickten ID. Schlüssel nur als Hash gespeichert. Ein AVA-Container bekommt genau einen Schlüssel und sieht nur seine eigenen Daten.
-- **Ein Kern-Objekt pro Mandant**, beim ersten Zugriff angelegt. Die Einbettung wird geteilt.
+- **Kunden-Schlüssel.** Der Dienst leitet den Mandanten aus `Authorization: Bearer` ab, nie aus einer frei mitgeschickten ID. Gespeichert wird HMAC-SHA-256 mit eigenem Salt in `mandanten-zugang.json`. Der Schlüssel wird einmal beim Anlegen ausgegeben, danach nie geloggt und nie zurückgegeben. Ein AVA-Container bekommt genau einen Schlüssel und sieht nur seine eigenen Daten.
+- **Ein Kern-Objekt pro Mandant** in `mandanten.py`, beim ersten Zugriff angelegt. Die lokale Einbettung wird einmal geladen und von allen Mandanten mit `lokal` geteilt. Ein Mandant mit eigener API-Einbettung hat seine Vektorbreite für sich.
+- **Verwaltung.** Anlegen, Sperren, Freigeben und Vergessen laufen über `python -m mini_ki.mandanten` im Container, nicht über die Kunden-API. `anlegen` schreibt den Schlüssel einmal nach stdout. `vergessen` löscht genau den Ordner dieses Mandanten.
 - **Mehr Kunden heißt weitere Server.** Ein Mandant liegt immer auf genau einem Server. Kein gemeinsamer Speicher über Server.
-- **Anfang:** Solange nur Wudu AVA nutzt, läuft Mini-KI als zweiter Container neben AVA im selben Compose-Stapel, mit dem Mandanten `standard`.
+- **Anfang:** Solange nur Wudu AVA nutzt, läuft Mini-KI als zweiter Container neben AVA im selben Compose-Stapel, mit dem Mandanten `standard`. Ohne `mandanten-zugang.json` bleibt dieser eine Mandant, optional mit `MINI_KI_ZUGANG`.
 
 ```text
 Server
@@ -154,7 +156,7 @@ Server
 
 ## Docker Compose
 
-Ein Dienst `mini-ki`, ein Volume `/data` mit Modell-Cache und den Mandanten-Ordnern (siehe oben). Einstellungen über `.env` (nicht im Repository, nur `.env.example`). Port `[Port]`, voreingestellt nur `127.0.0.1`.
+Ein Dienst `mini-ki`, ein Volume `/data` mit Modell-Cache und den Mandanten-Ordnern (siehe oben). Einstellungen über `.env` (nicht im Repository, nur `.env.example`). Port `[Port]`, voreingestellt nur `127.0.0.1`. Mandanten verwaltet man im Container mit `python -m mini_ki.mandanten`, nicht über die Kunden-API.
 
 ## Einbau-Beispiele
 
