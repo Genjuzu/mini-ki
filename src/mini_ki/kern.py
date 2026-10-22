@@ -10,9 +10,19 @@ from .einbettung import Einbettung
 from .speicher_sqlite import SqliteSpeicher
 from .sperre import gesperrt
 
+_AUDIO_MEDIENTYP = "audio/ogg; codecs=opus"
+_DATEI_MEDIENTYP = "application/octet-stream"
+
 
 def _norm(text: str) -> str:
     return " ".join((text or "").split()).casefold()
+
+
+def _feld(wert: object) -> str:
+    """Nur gewöhnliche Leerzeichen am Rand. Zeilenumbrüche bleiben und scheitern später."""
+    if not isinstance(wert, str):
+        return ""
+    return wert.strip(" ")
 
 
 class MiniKI:
@@ -41,7 +51,7 @@ class MiniKI:
         self._speicher.bereitstellen()
 
     def finden(self, frage: str) -> dict | None:
-        """Nur `gut`. Erster Treffer ab der Schwelle, Gegenbeispiele ausgelassen."""
+        """Nur `gut`. Erster Treffer ab der Schwelle. Anhänge stehen dabei, wenn welche da sind."""
         frage = (frage or "").strip()
         if not frage or gesperrt(frage):
             return None
@@ -54,11 +64,15 @@ class MiniKI:
             aehnlichkeit = 1.0 - abstand
             if aehnlichkeit < self._schwelle:
                 break
-            return {
+            ergebnis = {
                 "id": eintrag_id,
                 "antwort": antwort,
                 "aehnlichkeit": round(aehnlichkeit, 3),
             }
+            anhaenge = self._speicher.anhaenge_lesen(eintrag_id)
+            if anhaenge:
+                ergebnis["anhaenge"] = anhaenge
+            return ergebnis
         return None
 
     def merken(
@@ -89,7 +103,7 @@ class MiniKI:
         return self._speicher.bewertung_setzen(eintrag_id, bewertung)
 
     def umschreiben(self, id: str, antwort: str) -> bool:
-        """Neuer Text. Der Vektor bleibt. `schlecht` bleibt stehen."""
+        """Neuer Text. Der Vektor bleibt, Anhänge fallen weg. `schlecht` bleibt stehen."""
         eintrag_id = (id or "").strip()
         antwort = (antwort or "").strip()
         if not eintrag_id or not antwort or gesperrt(antwort):
@@ -103,10 +117,30 @@ class MiniKI:
         return self._speicher.lesen(eintrag_id)
 
     def vergessen(self, id: str) -> bool:
+        """Eintrag, Formulierungen, Vektoren und Anhänge weg."""
         eintrag_id = (id or "").strip()
         if not eintrag_id:
             return False
         return self._speicher.loeschen(eintrag_id)
+
+    def anhang_setzen(self, id: str, art: str, daten: bytes) -> bool:
+        """Bytes zum Eintrag. `audio` ist Opus (Ogg) und liegt neben der Datenbank."""
+        eintrag_id = _feld(id)
+        art_text = _feld(art)
+        if isinstance(daten, bytearray):
+            daten = bytes(daten)
+        if not eintrag_id or not art_text or not isinstance(daten, bytes):
+            return False
+        medientyp = _AUDIO_MEDIENTYP if art_text == "audio" else _DATEI_MEDIENTYP
+        return self._speicher.anhang_setzen(eintrag_id, art_text, daten, medientyp)
+
+    def anhang_lesen(self, id: str, art: str) -> bytes | None:
+        """Bytes des Anhangs, oder nichts wenn er fehlt oder die Art aus dem Ordner ausbricht."""
+        eintrag_id = _feld(id)
+        art_text = _feld(art)
+        if not eintrag_id or not art_text:
+            return None
+        return self._speicher.anhang_lesen(eintrag_id, art_text)
 
     def trennen(self, frage: str, id: str) -> bool:
         """Diese Frage soll diese Antwort nicht mehr treffen."""

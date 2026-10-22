@@ -1,8 +1,12 @@
-"""SQLite-Speicher mit sqlite-vec. Eine Datei, kein globaler Zustand."""
+"""SQLite-Speicher mit sqlite-vec. Eine Datei, Anhänge als Dateien daneben."""
 
 from __future__ import annotations
 
+import hashlib
+import os
+import re
 import sqlite3
+import tempfile
 import threading
 import uuid
 from pathlib import Path
@@ -10,6 +14,9 @@ from pathlib import Path
 import sqlite_vec
 
 _SCHEMA = "1"
+# Art und Kennung werden Pfadteile. `..`, Schrägstriche und Steuerzeichen bleiben draußen.
+_ART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_EINTRAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
 class ModellPasstNicht(Exception):
@@ -36,8 +43,80 @@ def _pack(vektor: list[float]) -> bytes:
     return sqlite_vec.serialize_float32(vektor)
 
 
+def _medientyp_ok(medientyp: str) -> bool:
+    if not isinstance(medientyp, str) or not medientyp or len(medientyp) > 200:
+        return False
+    return not any(zeichen in medientyp for zeichen in "\r\n\x00")
+
+
+def _text_pruefsumme(text: str) -> str:
+    """Schlüssel zum Antworttext, aus dem ein Anhang entstand."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _atomar_schreiben(ziel: Path, daten: bytes) -> None:
+    """Schreibt über eine temporäre Datei im selben Ordner und benennt dann um."""
+    if ziel.is_symlink():
+        raise OSError("Anhang-Pfad ist ein Symlink.")
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".", suffix=".teil", dir=ziel.parent)
+    try:
+        sichtbar = 0
+        while sichtbar < len(daten):
+            geschrieben = os.write(fd, daten[sichtbar:])
+            if geschrieben <= 0:
+                raise OSError("Anhang konnte nicht vollständig geschrieben werden.")
+            sichtbar += geschrieben
+        os.fsync(fd)
+    except Exception:
+        os.close(fd)
+        os.unlink(tmp_name)
+        raise
+    os.close(fd)
+    try:
+        os.replace(tmp_name, ziel)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def _sicher_lesen(ziel: Path) -> bytes | None:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(ziel, flags)
+    except OSError:
+        return None
+    try:
+        teile: list[bytes] = []
+        while True:
+            block = os.read(fd, 1024 * 1024)
+            if not block:
+                break
+            teile.append(block)
+        return b"".join(teile)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def _wiederherstellen(ziel: Path, alt: bytes | None, hatte_datei: bool) -> None:
+    try:
+        if ziel.is_symlink():
+            return
+        if hatte_datei and alt is not None:
+            _atomar_schreiben(ziel, alt)
+        elif ziel.is_file():
+            ziel.unlink()
+    except OSError:
+        pass
+
+
 class SqliteSpeicher:
-    """Tabellen `eintrag`, `frage`, `gegen` und ihre Vektoren, plus `meta`."""
+    """Tabellen `eintrag`, `frage`, `gegen`, `anhang` und die Vektoren, plus `meta`."""
 
     def __init__(
         self,
@@ -95,7 +174,9 @@ class SqliteSpeicher:
         return self._laufen(fn)
 
     def antwort_setzen(self, eintrag_id: str, antwort: str) -> bool:
-        def fn(conn: sqlite3.Connection) -> bool:
+        """Neuer Text. Anhänge zu diesem Eintrag fallen weg."""
+
+        def fn(conn: sqlite3.Connection) -> list[Path] | None:
             cur = conn.execute(
                 """
                 UPDATE eintrag
@@ -104,9 +185,15 @@ class SqliteSpeicher:
                 """,
                 (antwort, eintrag_id),
             )
-            return cur.rowcount == 1
+            if cur.rowcount != 1:
+                return None
+            return self._anhang_entfernen(conn, eintrag_id)
 
-        return self._laufen(fn)
+        ziele = self._laufen(fn)
+        if ziele is None:
+            return False
+        self._dateien_weg(ziele)
+        return True
 
     def lesen(self, eintrag_id: str) -> dict | None:
         def fn(conn: sqlite3.Connection) -> dict | None:
@@ -125,7 +212,7 @@ class SqliteSpeicher:
         return self._laufen(fn)
 
     def loeschen(self, eintrag_id: str) -> bool:
-        def fn(conn: sqlite3.Connection) -> bool:
+        def fn(conn: sqlite3.Connection) -> list[Path] | None:
             alt = conn.execute(
                 "SELECT id FROM frage WHERE eintrag_id = ?",
                 (eintrag_id,),
@@ -141,7 +228,109 @@ class SqliteSpeicher:
                 (eintrag_id,),
             )
             cur = conn.execute("DELETE FROM eintrag WHERE id = ?", (eintrag_id,))
-            return cur.rowcount == 1
+            if cur.rowcount != 1:
+                return None
+            return self._anhang_entfernen(conn, eintrag_id)
+
+        ziele = self._laufen(fn)
+        if ziele is None:
+            return False
+        self._dateien_weg(ziele)
+        return True
+
+    def anhang_setzen(
+        self,
+        eintrag_id: str,
+        art: str,
+        daten: bytes,
+        medientyp: str,
+    ) -> bool:
+        """Legt die Bytes unter `anhaenge/<eintrag>/<art>` ab. Die Prüfsumme gehört zum Text."""
+        if not isinstance(daten, bytes) or not _medientyp_ok(medientyp):
+            return False
+        ziel = self._anhang_ziel(eintrag_id, art)
+        if ziel is None or ziel.is_symlink():
+            return False
+
+        def fn(conn: sqlite3.Connection) -> bool:
+            row = conn.execute(
+                "SELECT antwort FROM eintrag WHERE id = ?",
+                (eintrag_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            pruefsumme = _text_pruefsumme(row["antwort"])
+            hatte_datei = ziel.is_file() and not ziel.is_symlink()
+            alt = _sicher_lesen(ziel) if hatte_datei else None
+            if hatte_datei and alt is None:
+                return False
+            try:
+                _atomar_schreiben(ziel, daten)
+                conn.execute(
+                    """
+                    INSERT INTO anhang (
+                        eintrag_id, art, medientyp, groesse, pruefsumme
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(eintrag_id, art) DO UPDATE SET
+                        medientyp = excluded.medientyp,
+                        groesse = excluded.groesse,
+                        pruefsumme = excluded.pruefsumme
+                    """,
+                    (eintrag_id, art, medientyp, len(daten), pruefsumme),
+                )
+            except Exception:
+                _wiederherstellen(ziel, alt, hatte_datei)
+                raise
+            return True
+
+        return self._laufen(fn)
+
+    def anhang_lesen(self, eintrag_id: str, art: str) -> bytes | None:
+        ziel = self._anhang_ziel(eintrag_id, art)
+        if ziel is None:
+            return None
+
+        def fn(conn: sqlite3.Connection) -> bytes | None:
+            row = conn.execute(
+                """
+                SELECT groesse FROM anhang
+                WHERE eintrag_id = ? AND art = ?
+                """,
+                (eintrag_id, art),
+            ).fetchone()
+            if row is None:
+                return None
+            daten = _sicher_lesen(ziel)
+            if daten is None or len(daten) != int(row["groesse"]):
+                return None
+            return daten
+
+        return self._laufen(fn)
+
+    def anhaenge_lesen(self, eintrag_id: str) -> list[dict]:
+        if not isinstance(eintrag_id, str) or not _EINTRAG.fullmatch(eintrag_id):
+            return []
+
+        def fn(conn: sqlite3.Connection) -> list[dict]:
+            rows = conn.execute(
+                """
+                SELECT art, medientyp, groesse, pruefsumme
+                FROM anhang
+                WHERE eintrag_id = ?
+                ORDER BY art
+                """,
+                (eintrag_id,),
+            ).fetchall()
+            return [
+                {
+                    "art": row["art"],
+                    "medientyp": row["medientyp"],
+                    "groesse": int(row["groesse"]),
+                    "pruefsumme": row["pruefsumme"],
+                }
+                for row in rows
+            ]
 
         return self._laufen(fn)
 
@@ -249,6 +438,62 @@ class SqliteSpeicher:
             return gegen, kandidaten
 
         return self._laufen(fn)
+
+    def _anhang_wurzel(self) -> Path:
+        return (self.pfad.resolve().parent / "anhaenge").resolve()
+
+    def _anhang_ziel(self, eintrag_id: str, art: str) -> Path | None:
+        """Nur `anhaenge/<eintrag>/<art>`. `..` und andere Ausbrüche sind kein Ziel."""
+        if (
+            not isinstance(eintrag_id, str)
+            or not isinstance(art, str)
+            or not _EINTRAG.fullmatch(eintrag_id)
+            or not _ART.fullmatch(art)
+        ):
+            return None
+        wurzel = self._anhang_wurzel()
+        ziel = (wurzel / eintrag_id / art).resolve()
+        try:
+            relativ = ziel.relative_to(wurzel)
+        except ValueError:
+            return None
+        if relativ.parts != (eintrag_id, art):
+            return None
+        return ziel
+
+    def _anhang_entfernen(self, conn: sqlite3.Connection, eintrag_id: str) -> list[Path]:
+        rows = conn.execute(
+            "SELECT art FROM anhang WHERE eintrag_id = ?",
+            (eintrag_id,),
+        ).fetchall()
+        conn.execute("DELETE FROM anhang WHERE eintrag_id = ?", (eintrag_id,))
+        ziele: list[Path] = []
+        for row in rows:
+            ziel = self._anhang_ziel(eintrag_id, row["art"])
+            if ziel is not None:
+                ziele.append(ziel)
+        return ziele
+
+    def _dateien_weg(self, ziele: list[Path]) -> None:
+        wurzel = self._anhang_wurzel()
+        for ziel in ziele:
+            try:
+                ziel.resolve().relative_to(wurzel)
+            except (ValueError, OSError):
+                continue
+            try:
+                if ziel.is_symlink() or ziel.is_file():
+                    ziel.unlink()
+            except OSError:
+                continue
+            eltern = ziel.parent
+            if eltern == wurzel:
+                continue
+            try:
+                eltern.resolve().relative_to(wurzel)
+                eltern.rmdir()
+            except (ValueError, OSError):
+                pass
 
     def _pruefe(self, vektor: list[float]) -> None:
         if len(vektor) != self.breite:
@@ -381,6 +626,18 @@ class SqliteSpeicher:
             CREATE VIRTUAL TABLE IF NOT EXISTS gegen_vec USING vec0(
                 gegen_id TEXT PRIMARY KEY,
                 embedding float[{breite}] distance_metric=cosine
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS anhang (
+                eintrag_id TEXT NOT NULL,
+                art TEXT NOT NULL,
+                medientyp TEXT NOT NULL,
+                groesse INTEGER NOT NULL,
+                pruefsumme TEXT NOT NULL,
+                PRIMARY KEY (eintrag_id, art)
             )
             """
         )
