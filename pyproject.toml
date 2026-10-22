@@ -18,6 +18,14 @@ lokal = [
 # Systemwerkzeug ffmpeg mit libopus. Bewusst kein Python-Paket:
 # ohne ffmpeg überspringt tests/test_audio_opus.py die Umwandlung.
 audio = []
+# PDF über pypdf (BSD-3-Clause), DOCX über python-docx (MIT).
+# TXT, Markdown und EPUB bleiben in der Standardbibliothek.
+# Ohne diese Pakete überspringt tests/test_text_holen.py nur die
+# betroffenen Tests.
+dokumente = [
+    "pypdf",
+    "python-docx",
+]
 
 [build-system]
 requires = ["setuptools>=64"]
@@ -32,4 +40,5 @@ pythonpath = ["src"]
 markers = [
     "modell: lokales Einbettungsmodell (fastembed); ohne Paket übersprungen",
     "audio: optionale Abhängigkeit audio (ffmpeg mit libopus); ohne sie übersprungen",
+    "dokumente: optionale Abhängigkeit dokumente (pypdf, python-docx); ohne sie übersprungen",
 ]
