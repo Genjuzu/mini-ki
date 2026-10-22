@@ -33,8 +33,8 @@ Ist `[KI-API]` gesetzt und die Herkunft `fehltreffer`, holt der Stapel die Antwo
 4. Sonst sucht derselbe Vektor in den Buchstellen. Liegt der beste Abstand innerhalb von `[Buchschwelle]`, geht diese Stelle zurück. Herkunft: `buch`. Das ist die Offline-Antwort. Ein lokales Sprachmodell formuliert sie in diesem Entwurf nicht um.
 5. Sonst, mit gesetzter `[KI-API]`, kommt die Antwort von dort. Herkunft zur Bewertung: die API. Ohne Schlüssel: `fehltreffer`.
 6. Der Mensch bewertet gut oder schlecht. Der Weg bleibt `[Bewertung]`.
-7. Gut: Anfrage, Vektor und Antwort werden gespeichert. Stammt die Antwort aus einem Buch, bleibt die Quellenangabe dabei.
-8. Schlecht: es entsteht kein Speichereintrag. Die Buchstelle bleibt im Buch, bis der Mensch das Buch entfernt. Dieselbe Stelle kann bei einer späteren Anfrage wieder erscheinen.
+7. Gut: Anfrage, Vektor und Antwort werden gespeichert. Stammt die Antwort aus einem Buch, bleibt die Quellenangabe dabei. Nur `gut` wird wieder ausgeliefert.
+8. Schlecht hängt davon ab, woher die Antwort kam. Eine neue Antwort, die nicht aus dem Speicher kam, wird als `schlecht` gespeichert. Sie zeigt die Lücke und wird nie ausgeliefert. Trifft die Antwort aus dem Speicher, gilt sie für diese Anfrage als unpassend: sie wird für diese Anfrage nicht mehr ausgeliefert, die Ablehnung wird mit Frage, Eintrag und Zeit festgehalten, und dieselbe Anfrage ist frei für eine neue Antwort. Für die Fragen, zu denen der Eintrag mit Daumen hoch bestätigt wurde, bleibt er gut. Ab drei Ablehnungen desselben Eintrags (die Zahl ist eine Einstellung) wird er zur Prüfung markiert, nicht gelöscht. Die Buchstelle bleibt im Buch, bis der Mensch das Buch entfernt. Dieselbe Stelle kann bei einer späteren, anderen Anfrage wieder erscheinen.
 
 Der Abstand des Speichers und die Ähnlichkeit des Modells sind dieselbe Entscheidung. Sie wird nicht aus zwei verschiedenen Maßen gemischt. `[Schwelle]` und `[Buchschwelle]` bleiben offen, bis sie am gefüllten Speicher geprüft sind.
 
@@ -71,7 +71,7 @@ Semantische Caches, Dokumentensuche und Docker-Installationen gibt es getrennt. 
 
 Gilt erst nach Freigabe und nach dem Bau:
 
-Auf einem Gerät startet der Stapel. Ein fremdes Projekt schickt eine Anfrage an `POST /v1/anfragen`. Eine bekannte gute Antwort kommt aus dem Speicher. Eine Buchstelle kommt offline, wenn sie innerhalb von `[Buchschwelle]` liegt. Nur die Bewertung gut legt Anfrage und Antwort in den Speicher. Eine schlechte Bewertung legt nichts ab.
+Auf einem Gerät startet der Stapel. Ein fremdes Projekt schickt eine Anfrage an `POST /v1/anfragen`. Eine bekannte gute Antwort kommt aus dem Speicher. Eine Buchstelle kommt offline, wenn sie innerhalb von `[Buchschwelle]` liegt. Nur `gut` wird ausgeliefert. Eine neue Antwort mit schlechter Bewertung bleibt als `schlecht` im Speicher und kommt nicht zurück. Eine schlechte Bewertung eines Treffers aus dem Speicher gilt nur für diese Anfrage; der Eintrag bleibt für seine bestätigten Fragen gut.
 
 ## Nicht in diesem Entwurf
 
@@ -100,7 +100,7 @@ Der Ablauf von oben bekommt eine weitere Herkunft `kiwix`, nach dem Speicher und
 3. Ist `[KIWIX-Adresse]` gesetzt, fragt Mini-KI `/search` und nimmt den Treffer als Antwort. Die Quellenangabe nennt die ZIM-Datei und den Pfad. Der Artikel selbst kommt bei Bedarf über `/raw`.
 4. Sonst die `[KI-API]`, oder `fehltreffer`.
 
-Bewertung gut schreibt Anfrage, Vektor und diese Antwort in denselben Speicher, mit der KIWIX-Quelle. Bewertung schlecht schreibt nichts. Die ZIM-Datei bleibt bei KIWIX.
+Bewertung gut schreibt Anfrage, Vektor und diese Antwort in denselben Speicher, mit der KIWIX-Quelle. Bewertung schlecht an einer neuen Antwort speichert sie als `schlecht` und liefert sie nicht wieder aus. Die ZIM-Datei bleibt bei KIWIX.
 
 Eine ganze Bibliothek wird auf diesem Weg nicht vorab in Vektoren kopiert. Die Volltextsuche von KIWIX bleibt der Zugriff. Die Größe einer kompletten Bibliothek ist hier nicht gemessen.
 
@@ -118,7 +118,7 @@ Dieselbe Oberfläche soll später eine gewählte ZIM-Datei oder eine ganze Bibli
 
 ### Schlechte Bewertung
 
-Eine schlechte Bewertung schreibt weiter nichts in den Speicher. Dieselbe Frage bietet danach eine neue Antwort an.
+Eine schlechte Bewertung hängt an der Herkunft. Eine neue Antwort wird als `schlecht` gespeichert und nicht wieder ausgeliefert. Dieselbe Frage bietet danach eine neue Antwort an. Kam die Antwort aus dem Speicher, bleibt der Eintrag für seine bestätigten Fragen gut. Für die abgelehnte Anfrage wird er ausgelassen, die Ablehnung wird festgehalten, und die Anfrage ist frei für eine neue Antwort.
 
 Bei einem Buch und bei KIWIX liegt die neue Antwort in der schon gereihten Liste. Die abgelehnte Stelle ist für diese Frage ausgelassen. Weiter und Zurück, auf der Weboberfläche die Pfeiltasten, gehen die übrigen Stellen der Reihe nach durch. Dieselbe Stelle kommt dabei nicht als Nächstes wieder. Eine versteckte Änderung einer Schwelle gibt es nicht. Die Auslassung ist die ganze Anpassung. Eine spätere, andere Frage darf dieselbe Stelle wieder finden, solange sie im Buch oder in der ZIM-Datei bleibt.
 
@@ -144,7 +144,7 @@ Pipeline: aus dem Prototyp herauslösen, hier als Baustein bauen, danach in AVA 
 
 Neu gegenüber dem Entwurf vom 2026-10-07:
 
-- Jede Antwort bekommt Daumen hoch oder Daumen runter. Daumen runter bietet eine neue Antwort an.
+- Jede Antwort bekommt Daumen hoch oder Daumen runter. Daumen runter auf eine neue Antwort speichert sie als `schlecht`. Daumen runter auf einen Speicher-Treffer gilt nur für diese Anfrage, hält die Ablehnung fest und bietet danach eine neue Antwort an.
 - Ein Eintrag kann Anhänge tragen, zuerst Audio. Eine gecachte Antwort kostet dann auch keine neue Sprachsynthese.
 - Die Einbettung ist austauschbar: lokal ohne Schlüssel, oder über einen OpenAI-kompatiblen Endpunkt mit Schlüssel, zum Beispiel OpenRouter. Das einbindende Projekt braucht dafür eine Einstellung.
 - Ein Projekt, das selbst antwortet (AVA), legt die Antwort mit `POST /v1/eintraege` ab und nutzt Mini-KI nur zum Suchen.
