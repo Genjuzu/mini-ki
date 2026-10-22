@@ -426,9 +426,10 @@ class SqliteSpeicher:
                 for row in conn.execute(_GEGEN, (gepackt,))
             ]
             # Zuerst die Formulierungen, danach der Altfall ohne frage-Zeile.
-            zeilen = list(conn.execute(_FRAGE, (gepackt,)))
+            # Der Schnitt gilt nur für `gut`, nicht für die k nächsten Vektoren.
+            zeilen = list(conn.execute(_FRAGE, (gepackt, _K_FRAGE)))
             abgedeckt = {row["id"] for row in zeilen}
-            for row in conn.execute(_ALT, (gepackt,)):
+            for row in conn.execute(_ALT, (gepackt, _K_ALT)):
                 if row["id"] not in abgedeckt:
                     zeilen.append(row)
             zeilen.sort(key=lambda row: float(row["distance"]))
@@ -643,6 +644,14 @@ class SqliteSpeicher:
         )
 
 
+# So viele gute Nachbarn wie bisher. Der Schnitt liegt auf `gut`, nicht auf
+# allen Vektoren: sqlite-vec wendet `k` vor dem Filter an und lässt höchstens
+# 4096 zu. Nähere unbewertete oder schlechte Zeilen würden den Treffer sonst
+# aus dem Fenster drücken. `vec_distance_cosine` ist derselbe Kosinusabstand
+# wie `distance_metric=cosine` in den vec0-Tabellen.
+_K_FRAGE = 8
+_K_ALT = 5
+
 _GEGEN = """
 SELECT gegen.eintrag_id AS id, gegen_vec.distance AS distance
 FROM gegen_vec
@@ -653,20 +662,24 @@ ORDER BY gegen_vec.distance
 """
 
 _FRAGE = """
-SELECT frage.eintrag_id AS id, frage_vec.distance AS distance, eintrag.antwort AS antwort
+SELECT frage.eintrag_id AS id,
+       vec_distance_cosine(frage_vec.embedding, ?) AS distance,
+       eintrag.antwort AS antwort
 FROM frage_vec
 JOIN frage ON frage.id = frage_vec.frage_id
 JOIN eintrag ON eintrag.id = frage.eintrag_id
-WHERE eintrag.bewertung = 'gut' AND frage_vec.embedding MATCH ?
-  AND k = 8
-ORDER BY frage_vec.distance
+WHERE eintrag.bewertung = 'gut'
+ORDER BY distance
+LIMIT ?
 """
 
 _ALT = """
-SELECT eintrag_vec.eintrag_id AS id, eintrag_vec.distance AS distance, eintrag.antwort AS antwort
+SELECT eintrag_vec.eintrag_id AS id,
+       vec_distance_cosine(eintrag_vec.embedding, ?) AS distance,
+       eintrag.antwort AS antwort
 FROM eintrag_vec
 JOIN eintrag ON eintrag.id = eintrag_vec.eintrag_id
-WHERE eintrag.bewertung = 'gut' AND eintrag_vec.embedding MATCH ?
-  AND k = 5
-ORDER BY eintrag_vec.distance
+WHERE eintrag.bewertung = 'gut'
+ORDER BY distance
+LIMIT ?
 """
