@@ -13,7 +13,7 @@ from pathlib import Path
 
 from mini_ki import MiniKI
 from mini_ki.api import Api, laufen
-from mini_ki.einbettung_lokal import LokaleEinbettung
+from mini_ki.einstellungen import Einstellungen, standard_fabrik
 
 _MANDANT = "standard"
 _HOST = "127.0.0.1"
@@ -72,11 +72,25 @@ def zugang_aus_umgebung() -> str | None:
 
 
 def api_bauen(pfad: str | Path | None = None) -> Api:
-    """Kern auf dem Datenordner. Die Gewichte bleiben im Cache-Ordner."""
+    """Kern auf dem Datenordner. Die Gewichte bleiben im Cache-Ordner.
+
+    Liegt `einstellungen.json` neben der SQLite-Datei, öffnet der Dienst
+    mit dieser Einbettung. Ohne Datei bleibt es das lokale Modell.
+    """
     pfade = layout(daten_wurzel(pfad))
-    einbettung = LokaleEinbettung(pfade["cache"])
+    datei = pfade["sqlite"].parent / "einstellungen.json"
+    einstellungen = Einstellungen(
+        datei,
+        fabrik=standard_fabrik(pfade["cache"]),
+        cache=pfade["cache"],
+    )
+    einbettung = einstellungen.fuer_start(pfade["sqlite"])
     kern = MiniKI(pfade["sqlite"], einbettung)
-    return Api(kern, token=zugang_aus_umgebung())
+    return Api(
+        kern,
+        token=zugang_aus_umgebung(),
+        einstellungen=einstellungen,
+    )
 
 
 def bindung() -> tuple[str, int]:

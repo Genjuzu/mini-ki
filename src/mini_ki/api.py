@@ -7,6 +7,9 @@ Schlüssel nötig. Mandant ist `standard`, bis die Trennung aus #15 da ist.
 Daumen runter folgt `entscheidungen/daumen-runter.md`. Ist `ablehnen` am
 Kern vorhanden (#17), wird es gerufen. Sonst wird eine neue Antwort als
 `schlecht` gespeichert, ein Speicher-Treffer nur für diese Anfrage gesperrt.
+
+`GET` und `PUT /v1/einstellungen` lesen und schreiben die Einbettung.
+Der Schlüssel wird nur gespeichert und nie zurückgegeben.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import NoReturn
 from urllib.parse import unquote
 
+from .einstellungen import Einstellungen, EinstellungenFehler, aus_kern
 from .sperre import gesperrt
 from .sprachmodell import Sprachmodell
 from .sprachmodell import SprachmodellFehler
@@ -101,6 +105,8 @@ class Api:
         token: str | None = None,
         sprachmodell: Sprachmodell | None = None,
         ki: Ki | None = None,
+        einstellungen: Einstellungen | None = None,
+        einbettung_fabrik=None,
     ) -> None:
         if sprachmodell is not None and not callable(sprachmodell):
             raise TypeError("Das Sprachmodell muss aufrufbar sein.")
@@ -110,6 +116,8 @@ class Api:
         self._token = _zugang(token)
         self._sprachmodell = sprachmodell
         self._ki = ki
+        self._einstellungen = einstellungen
+        self._einbettung_fabrik = einbettung_fabrik
         self._lock = threading.Lock()
         self._herkunft: dict[str, str] = {}
         self._fragen: dict[str, str] = {}
@@ -172,6 +180,12 @@ class Api:
         if pfad == "/v1/gesundheit":
             self._nur(methode, "GET")
             return self._gesundheit()
+        if pfad == "/v1/einstellungen":
+            if methode == "GET":
+                return self._einstellungen_lesen()
+            if methode == "PUT":
+                return self._einstellungen_schreiben(self._objekt(koerper))
+            self._nur(methode, "GET, PUT")
         if pfad.startswith("/v1/anfragen/"):
             return self._unter(methode, pfad[len("/v1/anfragen/") :], koerper)
         self._fehler(404, "Nicht gefunden.")
@@ -419,6 +433,25 @@ class Api:
             self._fehler(404, "Nicht gefunden.")
         typ = _AUDIO if art == "audio" else _DATEI
         return 200, _kopfzeilen(daten, typ), daten
+
+    def _konfiguration(self) -> Einstellungen:
+        if self._einstellungen is None:
+            self._einstellungen = aus_kern(self._kern, self._einbettung_fabrik)
+        return self._einstellungen
+
+    def _einstellungen_lesen(self) -> tuple[int, dict[str, str], bytes]:
+        try:
+            sicht = self._konfiguration().lesen(self._kern)
+        except EinstellungenFehler as fehler:
+            self._fehler(fehler.status, fehler.meldung)
+        return _json(200, sicht)
+
+    def _einstellungen_schreiben(self, daten: dict) -> tuple[int, dict[str, str], bytes]:
+        try:
+            sicht = self._konfiguration().schreiben(daten, self._kern)
+        except EinstellungenFehler as fehler:
+            self._fehler(fehler.status, fehler.meldung)
+        return _json(200, sicht)
 
     def _gesundheit(self) -> tuple[int, dict[str, str], bytes]:
         einbettung = getattr(self._kern, "_einbettung", None)
