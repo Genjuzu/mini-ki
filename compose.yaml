@@ -1,0 +1,25 @@
+# Ein Dienst. Auf dem Gerät ist der Port nur über 127.0.0.1 erreichbar.
+# Im Container hört der Prozess auf 0.0.0.0, sonst kommt die Weiterleitung nicht an.
+
+name: mini-ki
+
+services:
+  mini-ki:
+    build: .
+    ports:
+      - "127.0.0.1:${MINI_KI_PORT:-8080}:8080"
+    environment:
+      MINI_KI_HOST: "0.0.0.0"
+      MINI_KI_PORT: "8080"
+      MINI_KI_DATA: "/data"
+      MINI_KI_ZUGANG: "${MINI_KI_ZUGANG:-}"
+    volumes:
+      - mini-ki-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  mini-ki-data:
