@@ -49,6 +49,7 @@ api      dünne HTTP-API, Einstellungen, Schlüssel
 kern     finden, merken, bewerten, umschreiben, neu, trennen, formen, vergessen, anhaenge
    |-- einbettung   Schnittstelle: lokal (ONNX/fastembed) | API (OpenAI-kompatibel, z. B. OpenRouter) | Test
    |-- speicher     Schnittstelle: SQLite + sqlite-vec (erste Fassung) | später andere
+   |-- wissen       Dokumente und Abschnitte, eigene Datei, Vektor und FTS5
    |-- sperre       Musterfilter vor jedem Schreiben und Suchen
    '-- sprachmodell optional: Formulierungen, Verweis umschreiben, neue Antwort
 ```
@@ -91,6 +92,26 @@ Vektoren zweier Modelle passen nicht zusammen. Der Speicher merkt sich Modell un
 Erste Fassung wie im Prototyp: eine SQLite-Datei pro Mandant (#15), sqlite-vec in derselben Datei. Tabellen `eintrag` (Antwort, Bewertung, Art), `frage` + `frage_vec`, `gegen` + `gegen_vec`, `meta` (Modell, Breite, Schema-Fassung), `anhang`.
 
 `art` ist zuerst `antwort`. Später kommt `ablauf` dazu, für wiederverwendbare Workflows. Ein Ablauf trägt seine Schritte als JSON in einem eigenen Feld. Das ist nicht die erste Fassung.
+
+## Wissensspeicher
+
+Neben dem Antwortspeicher liegt eine eigene Datei `wissen.sqlite`. Der Pfad kommt beim Erzeugen herein. Vorgesehen ist sie im Mandanten-Ordner neben `mini-ki.sqlite`. Die Einbettung ist dasselbe Objekt wie beim Kern. Ein Projekt erzeugt den Speicher selbst, mit Pfad und Einbettung.
+
+| Tabelle | Inhalt |
+| --- | --- |
+| `dokument` | Kennung, Name, Typ, Größe (`bytes`), Status, Fortschritt, Fehler, Zeitpunkt |
+| `abschnitt` | Kennung, Dokument, Nummer, Stelle, Text |
+| `abschnitt_vec` | sqlite-vec, Kosinus, ein Vektor pro Abschnitt |
+| `abschnitt_fts` | FTS5 über den Abschnittstext |
+| `meta` | Modell, Breite, Schema-Fassung |
+
+Ein neues Dokument startet mit Status `neu`, Fortschritt 0 und ohne Fehler. `abschnitte_ablegen` ersetzt die Abschnitte dieses Dokuments und bettet den Text in Stapeln ein. `status_setzen` schreibt den Status, optional den Fortschritt von 0 bis 100 und den Fehler. `liste` und `holen` lesen die Dokumentzeile. `loeschen` entfernt das Dokument, seine Abschnitte, die Vektoren und die FTS-Einträge.
+
+`suchen(frage, anzahl=5, dokumente=None)` mischt die nächsten Vektoren und die FTS5-Treffer. Die Mischung ist Reciprocal Rank Fusion: Rang `r` zählt `1 / (60 + r)`, die Summe bestimmt die Reihenfolge. Ein Treffer trägt `dokument_id`, `dokument` (der Name), `stelle`, `text` und `aehnlichkeit`. Die Ähnlichkeit ist der Kosinus, oder 0, wenn der Abschnitt nicht unter den Vektor-Kandidaten war. `dokumente` ist eine Liste von Kennungen und grenzt beide Ranglisten ein. Ohne Liste gilt der ganze Speicher.
+
+Passt Modell oder Breite in `meta` nicht zur Einbettung, bricht das Öffnen mit `ModellPasstNicht` ab.
+
+Zerlegen, Hochladen und die Buch-Schnittstelle sind nicht dieser Speicher. Er nimmt Abschnitte entgegen, die der Aufrufer schon geschnitten hat.
 
 ## Anhänge
 
@@ -166,4 +187,4 @@ Ein Dienst `mini-ki`, ein Volume `/data` mit Modell-Cache und den Mandanten-Ordn
 
 ## Nicht in dieser Stufe
 
-Bücher, KIWIX, Android, Uhr, Gewichtsanpassung, eine öffentliche zentrale API für fremde Projekte. (Der gemeinsame Dienst pro Server für AVA-Kunden oben ist davon getrennt.)
+Hochladen und Zerlegen von Büchern, KIWIX, Android, Uhr, Gewichtsanpassung, eine öffentliche zentrale API für fremde Projekte. Der Wissensspeicher hält fertige Abschnitte, die Buch-Schnittstelle bleibt offen. (Der gemeinsame Dienst pro Server für AVA-Kunden oben ist davon getrennt.)
