@@ -2,7 +2,8 @@
 
 Voreingestellt hört der Prozess nur auf 127.0.0.1. Im Container setzt
 Compose `MINI_KI_HOST=0.0.0.0`, veröffentlicht den Port aber nur auf
-127.0.0.1. SQLite und Anhänge liegen unter `mandanten/standard/`,
+127.0.0.1. SQLite und Anhänge liegen unter `mandanten/<id>/`.
+Ohne `mandanten-zugang.json` ist das genau `standard`.
 Gewichte nur im Ordner `modell-cache`, nie im Image.
 """
 
@@ -14,6 +15,7 @@ from pathlib import Path
 from mini_ki import MiniKI
 from mini_ki.api import Api, laufen
 from mini_ki.einstellungen import Einstellungen, standard_fabrik
+from mini_ki.mandanten import Mandanten
 
 _MANDANT = "standard"
 _HOST = "127.0.0.1"
@@ -74,10 +76,17 @@ def zugang_aus_umgebung() -> str | None:
 def api_bauen(pfad: str | Path | None = None) -> Api:
     """Kern auf dem Datenordner. Die Gewichte bleiben im Cache-Ordner.
 
-    Liegt `einstellungen.json` neben der SQLite-Datei, öffnet der Dienst
-    mit dieser Einbettung. Ohne Datei bleibt es das lokale Modell.
+    Liegt `mandanten-zugang.json` mit mindestens einem Mandanten, gilt
+    der Kunden-Schlüssel daraus. Sonst bleibt es ein Mandant `standard`,
+    optional mit `MINI_KI_ZUGANG`. Liegt `einstellungen.json` neben der
+    SQLite-Datei, öffnet der Dienst mit dieser Einbettung. Ohne Datei
+    bleibt es das lokale Modell.
     """
-    pfade = layout(daten_wurzel(pfad))
+    wurzel = daten_wurzel(pfad)
+    pfade = layout(wurzel)
+    mandanten = Mandanten(wurzel)
+    if mandanten.konfiguriert():
+        return Api(mandanten=mandanten)
     datei = pfade["sqlite"].parent / "einstellungen.json"
     einstellungen = Einstellungen(
         datei,
