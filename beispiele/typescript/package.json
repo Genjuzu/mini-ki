@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Kleiner Mini-KI-Client für AVA. Keine Abhängigkeiten."
+}
