@@ -1,6 +1,6 @@
 # Mini-KI
 
-Status: Entwurf. Ein laufender Stapel liegt hier nicht.
+Status: Entwurf. Der Dienst startet mit Docker Compose (`compose.yaml`): ein Dienst, Daten unter `/data`, Port nur auf `127.0.0.1`.
 
 Mini-KI ist ein Antwortspeicher für das eigene Gerät. Ein Projekt schickt eine Anfrage an eine HTTP-API auf diesem Gerät. Liegt eine ähnliche Anfrage schon mit einer als gut bewerteten Antwort im Speicher, kommt diese Antwort zurück. Sonst kann eine Stelle aus einem mitgebrachten Buch antworten, oder ein Treffer aus einer angebundenen KIWIX-Bibliothek. Trifft keines davon, geht die Anfrage an eine KI-API, sofern ein Schlüssel gesetzt ist. Der Mensch bewertet die Antwort. Nur eine gute Antwort bleibt im Speicher.
 
@@ -10,7 +10,7 @@ Eine schlechte Bewertung bietet eine neue Antwort an. Bei Buch und KIWIX geht We
 
 Geteilt wird das Vorhaben in diesem Repository. Jede Installation läuft auf dem Gerät des Menschen. Eine zentrale API, die wir betreiben, ist nicht Teil des Entwurfs.
 
-Die Installation soll später ein Docker-Compose-Stapel sein. Er ist noch nicht gebaut.
+Die Installation ist ein Docker-Compose-Stapel (`compose.yaml`). Gewichte liegen im Volume unter `/data/modell-cache`, nicht im Image.
 
 ## Kern (Python)
 
