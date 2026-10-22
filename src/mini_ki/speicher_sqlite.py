@@ -116,7 +116,7 @@ def _wiederherstellen(ziel: Path, alt: bytes | None, hatte_datei: bool) -> None:
 
 
 class SqliteSpeicher:
-    """Tabellen `eintrag`, `frage`, `gegen`, `anhang` und die Vektoren, plus `meta`."""
+    """Tabellen `eintrag`, `frage`, `gegen`, `ablehnung`, `anhang` und die Vektoren, plus `meta`."""
 
     def __init__(
         self,
@@ -223,6 +223,10 @@ class SqliteSpeicher:
                     (row["id"],),
                 )
             conn.execute("DELETE FROM frage WHERE eintrag_id = ?", (eintrag_id,))
+            conn.execute(
+                "DELETE FROM ablehnung WHERE eintrag_id = ?",
+                (eintrag_id,),
+            )
             conn.execute(
                 "DELETE FROM eintrag_vec WHERE eintrag_id = ?",
                 (eintrag_id,),
@@ -350,6 +354,84 @@ class SqliteSpeicher:
             )
 
         self._laufen(fn)
+
+    def ablehnung_merken(
+        self,
+        eintrag_id: str,
+        frage: str,
+        vektor: list[float],
+        schwelle: int,
+    ) -> dict | None:
+        """Gegenbeispiel und Protokollzeile. None, wenn der Eintrag fehlt.
+
+        Die Bewertung bleibt. Ab `schwelle` Zeilen wird `pruefung` gesetzt.
+        """
+        self._pruefe(vektor)
+        if isinstance(schwelle, bool) or not isinstance(schwelle, int) or schwelle < 1:
+            raise ValueError("Die Ablehnungs-Schwelle muss eine positive ganze Zahl sein.")
+        gepackt = _pack(vektor)
+        gegen_id = uuid.uuid4().hex
+        ablehnung_id = uuid.uuid4().hex
+
+        def fn(conn: sqlite3.Connection) -> dict | None:
+            row = conn.execute(
+                "SELECT id FROM eintrag WHERE id = ?",
+                (eintrag_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "INSERT INTO gegen (id, eintrag_id, frage) VALUES (?, ?, ?)",
+                (gegen_id, eintrag_id, frage),
+            )
+            conn.execute(
+                "INSERT INTO gegen_vec (gegen_id, embedding) VALUES (?, ?)",
+                (gegen_id, gepackt),
+            )
+            conn.execute(
+                """
+                INSERT INTO ablehnung (id, eintrag_id, frage)
+                VALUES (?, ?, ?)
+                """,
+                (ablehnung_id, eintrag_id, frage),
+            )
+            zeit = conn.execute(
+                "SELECT zeit FROM ablehnung WHERE id = ?",
+                (ablehnung_id,),
+            ).fetchone()["zeit"]
+            anzahl = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM ablehnung WHERE eintrag_id = ?",
+                    (eintrag_id,),
+                ).fetchone()["n"]
+            )
+            pruefung = anzahl >= schwelle
+            if pruefung:
+                conn.execute(
+                    "UPDATE eintrag SET pruefung = 1 WHERE id = ?",
+                    (eintrag_id,),
+                )
+            return {"zeit": zeit, "anzahl": anzahl, "pruefung": pruefung}
+
+        return self._laufen(fn)
+
+    def ablehnungen_lesen(self, eintrag_id: str | None = None) -> list[dict]:
+        def fn(conn: sqlite3.Connection) -> list[dict]:
+            if eintrag_id is None:
+                rows = conn.execute(_ABLEHNUNG_ALLE).fetchall()
+            else:
+                rows = conn.execute(_ABLEHNUNG_EINE, (eintrag_id,)).fetchall()
+            return [
+                {
+                    "frage": row["frage"],
+                    "eintrag": row["eintrag"],
+                    "zeit": row["zeit"],
+                    "pruefung": bool(row["pruefung"]),
+                }
+                for row in rows
+            ]
+
+        return self._laufen(fn)
 
     def formulierungen_ersetzen(
         self,
@@ -584,7 +666,8 @@ class SqliteSpeicher:
                 antwort TEXT NOT NULL,
                 bewertung TEXT,
                 art TEXT DEFAULT 'antwort',
-                erstellt TEXT DEFAULT (datetime('now'))
+                erstellt TEXT DEFAULT (datetime('now')),
+                pruefung INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -642,6 +725,27 @@ class SqliteSpeicher:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ablehnung (
+                id TEXT PRIMARY KEY,
+                eintrag_id TEXT NOT NULL,
+                frage TEXT NOT NULL,
+                zeit TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ablehnung_eintrag
+            ON ablehnung (eintrag_id)
+            """
+        )
+        spalten = {row["name"] for row in conn.execute("PRAGMA table_info(eintrag)")}
+        if "pruefung" not in spalten:
+            conn.execute(
+                "ALTER TABLE eintrag ADD COLUMN pruefung INTEGER NOT NULL DEFAULT 0"
+            )
 
 
 # So viele gute Nachbarn wie bisher. Der Schnitt liegt auf `gut`, nicht auf
@@ -683,3 +787,19 @@ WHERE eintrag.bewertung = 'gut'
 ORDER BY distance
 LIMIT ?
 """
+
+_ABLEHNUNG = """
+SELECT ablehnung.frage AS frage,
+       ablehnung.eintrag_id AS eintrag,
+       ablehnung.zeit AS zeit,
+       COALESCE(eintrag.pruefung, 0) AS pruefung
+FROM ablehnung
+LEFT JOIN eintrag ON eintrag.id = ablehnung.eintrag_id
+"""
+
+# `rowid` bleibt die Reihenfolge, auch wenn `datetime('now')` in derselben Sekunde liegt.
+_ABLEHNUNG_ALLE = _ABLEHNUNG + "ORDER BY ablehnung.rowid"
+
+_ABLEHNUNG_EINE = (
+    _ABLEHNUNG + "WHERE ablehnung.eintrag_id = ? ORDER BY ablehnung.rowid"
+)

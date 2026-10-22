@@ -26,8 +26,22 @@ def _feld(wert: object) -> str:
     return wert.strip(" ")
 
 
+def _ganze_schwelle(wert: int, name: str) -> int:
+    if isinstance(wert, bool) or not isinstance(wert, int) or wert < 1:
+        raise ValueError(f"{name} muss eine positive ganze Zahl sein.")
+    return wert
+
+
+# Herkunft der API. Nur `speicher` ist ein Cache-Treffer.
+_HERKUNFT_NEU = frozenset({"ki", "neu", "fehltreffer"})
+
+
 class MiniKI:
-    """Antwortspeicher. Gut wird wiederverwendet, schlecht nur gelesen."""
+    """Antwortspeicher. Gut wird wiederverwendet, schlecht nur gelesen.
+
+    Daumen runter auf eine neue Antwort setzt `schlecht`. Daumen runter auf
+    einen Treffer gilt nur für diese Anfrage und bleibt als Lücke lesbar.
+    """
 
     def __init__(
         self,
@@ -37,12 +51,17 @@ class MiniKI:
         schwelle: float = 0.80,
         gegen_schwelle: float = 0.93,
         gleich_schwelle: float = 0.65,
+        ablehnung_schwelle: int = 3,
         audio_bitrate: int = STANDARD_BITRATE,
     ) -> None:
         self._einbettung = einbettung
         self._schwelle = schwelle
         self._gegen_schwelle = gegen_schwelle
         self._gleich_schwelle = gleich_schwelle
+        self._ablehnung_schwelle = _ganze_schwelle(
+            ablehnung_schwelle,
+            "Die Ablehnungs-Schwelle",
+        )
         self._audio_bitrate = bitrate_pruefen(audio_bitrate)
         self._lock = threading.Lock()
         self._speicher = SqliteSpeicher(
@@ -104,6 +123,69 @@ class MiniKI:
         if not eintrag_id:
             return False
         return self._speicher.bewertung_setzen(eintrag_id, bewertung)
+
+    def ablehnen(self, id: str, frage: str, herkunft: str) -> dict | None:
+        """Daumen runter. Die Herkunft entscheidet, was am Eintrag hängen bleibt.
+
+        `ki`, `neu` und `fehltreffer` sind eine neue Antwort: `bewerten`
+        setzt `schlecht`, `finden` liefert sie nie. `speicher` ist ein
+        Cache-Treffer: `trennen` gilt nur für diese Frage, der Eintrag bleibt
+        `gut` für seine eigenen Fragen, und die Lücke steht in `ablehnung`.
+        Ab `ablehnung_schwelle` Ablehnungen (Voreinstellung 3) wird der
+        Eintrag zur Prüfung markiert, nicht gelöscht.
+
+        Die Rückgabe ist gesetzt, wenn die Anfrage danach neu beantwortet
+        werden kann (`neu_generieren`). Sonst `None`.
+        """
+        if not isinstance(herkunft, str):
+            return None
+        herkunft = herkunft.strip()
+        eintrag_id = (id or "").strip()
+        frage_text = (frage or "").strip()
+        if herkunft == "speicher":
+            return self._ablehnen_speicher(eintrag_id, frage_text)
+        if herkunft not in _HERKUNFT_NEU:
+            return None
+        if not eintrag_id or not self.bewerten(eintrag_id, "schlecht"):
+            return None
+        return {
+            "neu_generieren": True,
+            "id": eintrag_id,
+            "frage": frage_text,
+            "herkunft": herkunft,
+            "pruefung": False,
+        }
+
+    def ablehnungen(self, id: str | None = None) -> list[dict]:
+        """Lücken aus Cache-Ablehnungen: Frage, Eintrag, Zeit."""
+        eintrag_id = None
+        if id is not None:
+            eintrag_id = (id or "").strip()
+            if not eintrag_id:
+                return []
+        return self._speicher.ablehnungen_lesen(eintrag_id)
+
+    def _ablehnen_speicher(self, eintrag_id: str, frage: str) -> dict | None:
+        if not eintrag_id or not frage or gesperrt(frage):
+            return None
+        if self.laden(eintrag_id) is None:
+            return None
+        vektor = self._vektoren([frage])[0]
+        gespeichert = self._speicher.ablehnung_merken(
+            eintrag_id,
+            frage,
+            vektor,
+            self._ablehnung_schwelle,
+        )
+        if gespeichert is None:
+            return None
+        return {
+            "neu_generieren": True,
+            "id": eintrag_id,
+            "frage": frage,
+            "herkunft": "speicher",
+            "pruefung": gespeichert["pruefung"],
+        }
 
     def umschreiben(self, id: str, antwort: str) -> bool:
         """Neuer Text. Der Vektor bleibt, Anhänge fallen weg. `schlecht` bleibt stehen."""
