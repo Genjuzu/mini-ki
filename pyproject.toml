@@ -12,6 +12,9 @@ dependencies = [
 dev = [
     "pytest",
 ]
+lokal = [
+    "fastembed",
+]
 
 [build-system]
 requires = ["setuptools>=64"]
@@ -23,3 +26,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "modell: lokales Einbettungsmodell (fastembed); ohne Paket übersprungen",
+]
