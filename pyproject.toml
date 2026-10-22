@@ -15,6 +15,9 @@ dev = [
 lokal = [
     "fastembed",
 ]
+# Systemwerkzeug ffmpeg mit libopus. Bewusst kein Python-Paket:
+# ohne ffmpeg überspringt tests/test_audio_opus.py die Umwandlung.
+audio = []
 
 [build-system]
 requires = ["setuptools>=64"]
@@ -28,4 +31,5 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "modell: lokales Einbettungsmodell (fastembed); ohne Paket übersprungen",
+    "audio: optionale Abhängigkeit audio (ffmpeg mit libopus); ohne sie übersprungen",
 ]
