@@ -30,8 +30,11 @@ import traceback
 from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import NoReturn
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote
 
+from .audio import OPUS_MEDIENTYP as _AUDIO
+from .audio import PCM_MEDIENTYP as _PCM
+from .audio import AudioFehler
 from .einstellungen import Einstellungen, EinstellungenFehler, aus_kern
 from .mandanten import MandantGesperrt, MandantUnbekannt
 from .sperre import gesperrt
@@ -44,8 +47,8 @@ _log = logging.getLogger(__name__)
 
 _MAX_JSON = 1_000_000
 _MAX_ANHANG = 32 * 1024 * 1024
-_AUDIO = "audio/ogg; codecs=opus"
 _DATEI = "application/octet-stream"
+_AUSGABE = {"pcm", "opus", "ogg"}
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 _ART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _BEARER = re.compile(r"^Bearer\s+(\S+)\s*$", re.IGNORECASE)
@@ -247,13 +250,18 @@ class Api:
                 if weg is None:
                     return _reinigen(_json(400, {"fehler": "Der Pfad ist ungültig."}), geheim)
                 self._protokoll(weg, geheim)
-                return _reinigen(self._route(methode.upper(), weg, roh), geheim)
+                return _reinigen(
+                    self._route(methode.upper(), weg, roh, kopf, _abfrage(pfad)),
+                    geheim,
+                )
             except _Abbruch as abbruch:
                 return _reinigen(abbruch.antwort, geheim)
             finally:
                 self._anfrage.reset(marke)
         except _Abbruch as abbruch:
             return _reinigen(abbruch.antwort, geheim)
+        except AudioFehler as fehler:
+            return _reinigen(_json(fehler.status, {"fehler": fehler.meldung}), geheim)
         except Exception:
             sys.stderr.write(_ohne(traceback.format_exc(), geheim))
             return _reinigen(_json(500, {"fehler": "Interner Fehler."}), geheim)
@@ -320,6 +328,8 @@ class Api:
         methode: str,
         pfad: str,
         koerper: bytes,
+        koepfe: Mapping[str, str],
+        abfrage: Mapping[str, list[str]],
     ) -> tuple[int, dict[str, str], bytes]:
         if pfad == "/v1/anfragen":
             self._nur(methode, "POST")
@@ -337,7 +347,13 @@ class Api:
                 return self._einstellungen_schreiben(self._objekt(koerper))
             self._nur(methode, "GET, PUT")
         if pfad.startswith("/v1/anfragen/"):
-            return self._unter(methode, pfad[len("/v1/anfragen/") :], koerper)
+            return self._unter(
+                methode,
+                pfad[len("/v1/anfragen/") :],
+                koerper,
+                koepfe,
+                abfrage,
+            )
         self._fehler(404, "Nicht gefunden.")
 
     def _unter(
@@ -345,6 +361,8 @@ class Api:
         methode: str,
         rest: str,
         koerper: bytes,
+        koepfe: Mapping[str, str],
+        abfrage: Mapping[str, list[str]],
     ) -> tuple[int, dict[str, str], bytes]:
         teile = rest.split("/")
         eintrag_id = _segment(teile[0], _ID) if teile and teile[0] else None
@@ -372,11 +390,11 @@ class Api:
             if art is None:
                 self._fehler(404, "Nicht gefunden.")
             if methode == "GET":
-                return self._anhang_lesen(eintrag_id, art)
+                return self._anhang_lesen(eintrag_id, art, _ausgabe(abfrage))
             if methode == "PUT":
                 if len(koerper) > _MAX_ANHANG:
                     self._fehler(413, "Der Inhalt ist zu groß.")
-                return self._anhang_setzen(eintrag_id, art, koerper)
+                return self._anhang_setzen(eintrag_id, art, koerper, _inhaltstyp(koepfe))
             self._nur(methode, "GET, PUT")
         self._fehler(404, "Nicht gefunden.")
 
@@ -565,10 +583,18 @@ class Api:
         eintrag_id: str,
         art: str,
         daten: bytes,
+        medientyp: str | None,
     ) -> tuple[int, dict[str, str], bytes]:
         if self._kern.laden(eintrag_id) is None:
             self._fehler(404, "Nicht gefunden.")
-        if not self._kern.anhang_setzen(eintrag_id, art, daten):
+        try:
+            if medientyp:
+                ok = self._kern.anhang_setzen(eintrag_id, art, daten, medientyp)
+            else:
+                ok = self._kern.anhang_setzen(eintrag_id, art, daten)
+        except AudioFehler as fehler:
+            self._fehler(fehler.status, fehler.meldung)
+        if not ok:
             self._fehler(400, "Der Anhang wurde nicht gespeichert.")
         return _json(200, {"art": art, "groesse": len(daten)})
 
@@ -576,13 +602,27 @@ class Api:
         self,
         eintrag_id: str,
         art: str,
+        ausgabe: str | None,
     ) -> tuple[int, dict[str, str], bytes]:
+        if ausgabe not in (None, *_AUSGABE):
+            self._fehler(400, "Das Format ist unbekannt.")
         if self._kern.laden(eintrag_id) is None:
             self._fehler(404, "Nicht gefunden.")
-        daten = self._kern.anhang_lesen(eintrag_id, art)
+        try:
+            if ausgabe:
+                daten = self._kern.anhang_lesen(eintrag_id, art, format=ausgabe)
+            else:
+                daten = self._kern.anhang_lesen(eintrag_id, art)
+        except AudioFehler as fehler:
+            self._fehler(fehler.status, fehler.meldung)
         if daten is None:
             self._fehler(404, "Nicht gefunden.")
-        typ = _AUDIO if art == "audio" else _DATEI
+        if art == "audio" and ausgabe == "pcm":
+            typ = _PCM
+        elif art == "audio":
+            typ = _AUDIO
+        else:
+            typ = _DATEI
         return 200, _kopfzeilen(daten, typ), daten
 
     def _konfiguration(self) -> Einstellungen:
@@ -718,6 +758,32 @@ def _zugang(token: str | None) -> str | None:
     if any(byte < 32 or byte == 127 for byte in roh):
         raise ValueError("Der Zugang ist als HTTP-Kopf unzulässig.")
     return token
+
+
+def _inhaltstyp(koepfe: Mapping[str, str] | None) -> str | None:
+    if not koepfe:
+        return None
+    for name, wert in koepfe.items():
+        if name.lower() == "content-type" and isinstance(wert, str):
+            text = wert.strip()
+            return text or None
+    return None
+
+
+def _abfrage(pfad: str) -> dict[str, list[str]]:
+    if not isinstance(pfad, str) or "?" not in pfad:
+        return {}
+    roh = pfad.split("?", 1)[1].split("#", 1)[0]
+    geparst = parse_qs(roh, keep_blank_values=True)
+    return {name.lower(): werte for name, werte in geparst.items()}
+
+
+def _ausgabe(abfrage: Mapping[str, list[str]]) -> str | None:
+    werte = abfrage.get("format")
+    if not werte:
+        return None
+    text = werte[-1].strip().lower()
+    return text or None
 
 
 def _pfad(pfad: str) -> str | None:

@@ -6,11 +6,12 @@ import threading
 import uuid
 from pathlib import Path
 
+from .audio import STANDARD_BITRATE, AudioFehler, bitrate_pruefen, nach_opus, nach_pcm
+from .audio import OPUS_MEDIENTYP as _AUDIO_MEDIENTYP
 from .einbettung import Einbettung
 from .speicher_sqlite import SqliteSpeicher
 from .sperre import gesperrt
 
-_AUDIO_MEDIENTYP = "audio/ogg; codecs=opus"
 _DATEI_MEDIENTYP = "application/octet-stream"
 
 
@@ -36,11 +37,13 @@ class MiniKI:
         schwelle: float = 0.80,
         gegen_schwelle: float = 0.93,
         gleich_schwelle: float = 0.65,
+        audio_bitrate: int = STANDARD_BITRATE,
     ) -> None:
         self._einbettung = einbettung
         self._schwelle = schwelle
         self._gegen_schwelle = gegen_schwelle
         self._gleich_schwelle = gleich_schwelle
+        self._audio_bitrate = bitrate_pruefen(audio_bitrate)
         self._lock = threading.Lock()
         self._speicher = SqliteSpeicher(
             pfad,
@@ -123,24 +126,58 @@ class MiniKI:
             return False
         return self._speicher.loeschen(eintrag_id)
 
-    def anhang_setzen(self, id: str, art: str, daten: bytes) -> bool:
-        """Bytes zum Eintrag. `audio` ist Opus (Ogg) und liegt neben der Datenbank."""
+    def anhang_setzen(
+        self,
+        id: str,
+        art: str,
+        daten: bytes,
+        medientyp: str | None = None,
+    ) -> bool:
+        """Bytes zum Eintrag. `audio` liegt als Opus (Ogg) neben der Datenbank.
+
+        PCM (`audio/L16; rate=24000; channels=1`) und WAV werden mit der
+        gesetzten Bitrate umgewandelt. Opus wird geprüft und unverändert
+        abgelegt. Ohne Medientyp bleiben die Bytes, wie sie kamen.
+        """
         eintrag_id = _feld(id)
         art_text = _feld(art)
         if isinstance(daten, bytearray):
             daten = bytes(daten)
         if not eintrag_id or not art_text or not isinstance(daten, bytes):
             return False
-        medientyp = _AUDIO_MEDIENTYP if art_text == "audio" else _DATEI_MEDIENTYP
-        return self._speicher.anhang_setzen(eintrag_id, art_text, daten, medientyp)
+        if medientyp is not None and not isinstance(medientyp, str):
+            return False
+        if art_text == "audio":
+            daten = nach_opus(daten, medientyp, bitrate=self._audio_bitrate)
+            gespeichert = _AUDIO_MEDIENTYP
+        else:
+            gespeichert = _DATEI_MEDIENTYP
+        return self._speicher.anhang_setzen(eintrag_id, art_text, daten, gespeichert)
 
-    def anhang_lesen(self, id: str, art: str) -> bytes | None:
-        """Bytes des Anhangs, oder nichts wenn er fehlt oder die Art aus dem Ordner ausbricht."""
+    def anhang_lesen(
+        self,
+        id: str,
+        art: str,
+        *,
+        format: str | None = None,
+    ) -> bytes | None:
+        """Bytes des Anhangs, oder nichts wenn er fehlt oder die Art aus dem Ordner ausbricht.
+
+        `format="pcm"` wandelt gespeichertes Audio nach 24 kHz mono zurück.
+        """
         eintrag_id = _feld(id)
         art_text = _feld(art)
         if not eintrag_id or not art_text:
             return None
-        return self._speicher.anhang_lesen(eintrag_id, art_text)
+        ziel = (format or "").strip().lower()
+        if ziel not in ("", "pcm", "opus", "ogg"):
+            raise AudioFehler("Das Format ist unbekannt.")
+        daten = self._speicher.anhang_lesen(eintrag_id, art_text)
+        if daten is None or ziel in ("", "opus", "ogg"):
+            return daten
+        if art_text != "audio":
+            raise AudioFehler("Nur Audio lässt sich nach PCM wandeln.")
+        return nach_pcm(daten)
 
     def trennen(self, frage: str, id: str) -> bool:
         """Diese Frage soll diese Antwort nicht mehr treffen."""
